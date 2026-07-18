@@ -1,0 +1,3 @@
+[submodule "repos/measureOCR"]
+	path = repos/measureOCR
+	url = https://github.com/PsychQuant/measureOCR.git
