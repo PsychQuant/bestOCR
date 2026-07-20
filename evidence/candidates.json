@@ -17,11 +17,18 @@
       "caveats": "no pilot quality/speed numbers on our corpus yet"
     },
     {
-      "model": "PaddleOCR-VL",
-      "role": "candidate from 2026-07-18 deep-research sweep",
+      "model": "PaddleOCR-VL (0.9B / 1.5 / 1.6)",
+      "role": "third E1 model-level candidate (user request 2026-07-20); artifact map verified via HF API",
       "tier": "T3",
-      "evidence": "vendor/model-card claims only — not yet run on our instrument",
-      "caveats": "unverified; needs Ollama/oMLX serving check before admission to any design"
+      "evidence": "artifact availability 2026-07-20 — official PaddlePaddle/PaddleOCR-VL-1.6-GGUF: single F16 (f3ae46ec) + mmproj (204d757d), NO quant ladder, no MLX; mradermacher 0.9B: f16/Q8_0/Q4_K_M full ladder (3a494335/2abd2172/7f50f35b) but NO mmproj; noctrex & JamePeng2023 1.5: F16+Q8_0+mmproj but NO Q4_K_M, MLX only 4/5/6bit; mlx-community 8bit exists ONLY for 0.9B original",
+      "caveats": "no single version has both a full public GGUF quant ladder and an 8-bit MLX artifact; Ollama serving of ERNIE-4.5 arch pending smoke test (official 1.6 downloaded)"
+    },
+    {
+      "model": "PP-OCRv5 / PP-StructureV3 (Baidu classical pipeline)",
+      "role": "excluded from the factorial by design",
+      "tier": "T3",
+      "evidence": "det+rec CNN/Transformer pipeline, no LLM component",
+      "caveats": "not a VLM — has no LLM weights to quantise, so the Quant factor is undefined for it; admissible only as a non-VLM baseline in exploratory/discussion, or a future article"
     },
     {
       "model": "Qwen-VL family (2.5-VL / 3-VL small variants)",
