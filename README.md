@@ -5,16 +5,21 @@ sibling of bestASR. The product answers "which model / quant / DPI / platform
 should I run for *this* document workload?" with numbers that trace back to a
 pre-registered benchmark, never to vibes.
 
-**Status: M3 — MCP server + plugin.** `bestocr run` executes any locally
-available engine (Apple Vision, tesseract, rapidocr/cnocr/surya via
-protocol-v1 Python adapters, Ollama VLMs); `bestocr recommend` returns an
-evidence-labelled answer — a tier-named ranking when measured rows exist in
-`evidence/rows.jsonl`, otherwise an honest *evidence-pending* capability
-filter. Agents get the same via `bestocr-mcp` (six tools incl. async job
-polling; heavy OCR single-flighted). Every run records the full evidence
-condition tuple to `~/.bestocr/runlog.jsonl`. Cloud reference + `evidence
-ingest` land in M4 (see
-`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`).
+**Status: M4 — all four spec milestones shipped.** `bestocr run` executes any
+of 11 engines (Apple Vision, tesseract, rapidocr/cnocr/surya via protocol-v1
+Python adapters, Ollama VLMs, and Claude/OpenAI/Gemini cloud *reference*
+engines); `bestocr recommend` returns an evidence-labelled answer — a
+tier-named ranking when measured rows exist in `evidence/rows.jsonl`,
+otherwise an honest *evidence-pending* capability filter (cloud engines are
+never ranked). `bestocr compare` runs a local engine against a cloud
+reference with a named metric (`quality.token_recall_vs_cloud@v1` — not
+ground truth). `bestocr evidence ingest <run-id>` is the explicit gate that
+promotes a runlog entry to T2 rows — run → ingest → RANKED recommend closes
+the loop. Agents get the same via `bestocr-mcp` (six tools incl. async job
+polling; heavy OCR single-flighted). Spec:
+`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`. Backlog:
+auto-routing (`--engine auto`), fallback chain, quality-estimand ingest,
+PaddleOCR-VL math-delimiter normalization.
 
 ## Install for AI agents (Claude Code)
 
@@ -83,14 +88,19 @@ swift build -c release
 .build/release/bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/
 .build/release/bestocr recommend --doc-type math_pdf --math --priority quality
+.build/release/bestocr compare page.png --engine vision --vs cloud.claude
+.build/release/bestocr evidence ingest <run-id>     # runlog → T2 rows (explicit gate)
 ```
 
 Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
-`vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl` (VLM engines need a running
-`ollama serve`; defaults are the SHA256-pinned `-anova:q8_0` builds, `--model`
-overrides). nougat is deferred: its local install is stranded in a pipx venv
-and upstream is archived — the adapter protocol makes re-admission a
-script-drop when wanted.
+`vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl`, `cloud.claude`,
+`cloud.openai`, `cloud.gemini`. VLM engines need a running `ollama serve`;
+defaults are the SHA256-pinned `-anova:q8_0` builds, `--model` overrides.
+Cloud engines are probe-gated by `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
+`GEMINI_API_KEY` (documents leave the machine — reference tier only; model
+defaults override via `BESTOCR_{CLAUDE,OPENAI,GEMINI}_MODEL`). nougat is
+deferred: its local install is stranded in a pipx venv and upstream is
+archived — the adapter protocol makes re-admission a script-drop when wanted.
 
 ## Evidence discipline (the core design constraint)
 
