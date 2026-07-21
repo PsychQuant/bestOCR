@@ -92,6 +92,21 @@ struct ExternalToolEngineTests {
         #expect(reason.contains("protocol"))
     }
 
+    @Test func adapterScriptMaterializesAndRefreshes() throws {
+        let dir = try Fixtures.tempDir()
+        setenv("BESTOCR_ADAPTER_DIR", dir.path, 1)
+        defer { unsetenv("BESTOCR_ADAPTER_DIR") }
+        let engine = ExternalToolEngine.rapidocr()
+        let url = try #require(engine.scriptURL())
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        let content = try String(contentsOf: url, encoding: .utf8)
+        #expect(content.contains("rapidocr"))
+        // Corrupt the materialized copy → next resolve rewrites it.
+        try "corrupted".write(to: url, atomically: true, encoding: .utf8)
+        let again = try #require(engine.scriptURL())
+        #expect(try String(contentsOf: again, encoding: .utf8).contains("rapidocr"))
+    }
+
     // Live integration — visible early-return skip when rapidocr is absent.
     @Test func rapidocrRecognizesFixture() async throws {
         let engine = ExternalToolEngine.rapidocr()

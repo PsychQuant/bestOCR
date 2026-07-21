@@ -42,10 +42,26 @@ public struct ExternalToolEngine: OCREngine {
         return nil
     }
 
+    /// Materializes the embedded adapter script (single-binary distribution,
+    /// M3): written to `BESTOCR_ADAPTER_DIR` or `~/.bestocr/adapters/`, and
+    /// rewritten whenever the on-disk copy differs from the embedded source.
     func scriptURL() -> URL? {
         if let scriptOverride { return scriptOverride }
-        return Bundle.module.url(forResource: "bestocr-\(tool)-adapter",
-                                 withExtension: "py", subdirectory: "Adapters")
+        guard let content = AdapterScripts.script(for: tool) else { return nil }
+        let dirPath = ProcessInfo.processInfo.environment["BESTOCR_ADAPTER_DIR"]
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".bestocr/adapters").path
+        let dir = URL(fileURLWithPath: dirPath)
+        let url = dir.appendingPathComponent("bestocr-\(tool)-adapter.py")
+        if (try? String(contentsOf: url, encoding: .utf8)) != content {
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try content.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                return nil
+            }
+        }
+        return url
     }
 
     /// Protocol reads exactly one JSON object: the LAST stdout line that

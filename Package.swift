@@ -24,8 +24,7 @@ let package = Package(
             dependencies: [
                 .product(name: "OCRCore", package: "ocr-swift"),
                 .product(name: "PDFToLaTeXCore", package: "pdf-to-latex-swift"),
-            ],
-            resources: [.copy("Adapters")]
+            ]
         ),
         .executableTarget(
             name: "bestocr",
