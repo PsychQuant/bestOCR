@@ -24,8 +24,13 @@ engine from the recommend ordering (measured rows first, capability filter
 otherwise) and falls back past unavailable/failing engines — every hop is
 printed, never silent. Pin an engine with `--engine <id>` (no fallback).
 Workflow skills ship with the plugin: `/bestocr:ocr`, `/bestocr:compare`,
-`/bestocr:evidence-ingest`. Backlog: quality-estimand ingest, PaddleOCR-VL
-math-delimiter normalization.
+`/bestocr:evidence-ingest`. `compare` runs are logged with their
+`quality.token_recall_vs_cloud@v1` score attached, so `evidence ingest`
+promotes speed **and** quality rows; `recommend --priority quality` falls
+back to that metric only when no `word_recall` rows exist (never blended).
+PaddleOCR-VL's `\( \)` math delimiters are normalized to `$`/`$$` at the
+engine (matched pairs only). Backlog: text-layer-aware PDF shortcut, MLX
+serving path (upstream).
 
 ## Install for AI agents (Claude Code)
 
