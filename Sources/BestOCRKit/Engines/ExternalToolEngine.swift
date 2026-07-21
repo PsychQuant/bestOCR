@@ -164,4 +164,22 @@ extension ExternalToolEngine {
                                              needsNetwork: false, memoryClass: .light),
             installHint: "pip install rapidocr")
     }
+
+    public static func cnocr() -> ExternalToolEngine {
+        ExternalToolEngine(
+            tool: "cnocr",
+            capabilities: EngineCapabilities(outputLevel: .plainText,
+                                             languages: ["zh-Hans", "zh-Hant", "en"],
+                                             needsNetwork: false, memoryClass: .light),
+            installHint: "pip install cnocr[ort-cpu]")
+    }
+
+    public static func surya() -> ExternalToolEngine {
+        ExternalToolEngine(
+            tool: "surya",
+            capabilities: EngineCapabilities(outputLevel: .plainText,
+                                             languages: ["en", "zh-Hant", "zh-Hans", "ja"],
+                                             needsNetwork: false, memoryClass: .medium),
+            installHint: "pip install surya-ocr")
+    }
 }
