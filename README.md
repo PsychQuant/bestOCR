@@ -17,9 +17,15 @@ ground truth). `bestocr evidence ingest <run-id>` is the explicit gate that
 promotes a runlog entry to T2 rows — run → ingest → RANKED recommend closes
 the loop. Agents get the same via `bestocr-mcp` (six tools incl. async job
 polling; heavy OCR single-flighted). Spec:
-`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`. Backlog:
-auto-routing (`--engine auto`), fallback chain, quality-estimand ingest,
-PaddleOCR-VL math-delimiter normalization.
+`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`.
+
+**Auto-routing is the default** (v0.4.0): `bestocr run doc.pdf` picks the
+engine from the recommend ordering (measured rows first, capability filter
+otherwise) and falls back past unavailable/failing engines — every hop is
+printed, never silent. Pin an engine with `--engine <id>` (no fallback).
+Workflow skills ship with the plugin: `/bestocr:ocr`, `/bestocr:compare`,
+`/bestocr:evidence-ingest`. Backlog: quality-estimand ingest, PaddleOCR-VL
+math-delimiter normalization.
 
 ## Install for AI agents (Claude Code)
 
@@ -84,6 +90,7 @@ docs/
 ```bash
 swift build -c release
 .build/release/bestocr list-engines             # probe table + install hints
+.build/release/bestocr run paper.pdf --doc-type math_pdf --math   # auto-routed
 .build/release/bestocr run page.png --engine vision --doc-type screenshot
 .build/release/bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/

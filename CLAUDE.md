@@ -63,8 +63,9 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
 - ✅ M1 引擎層 + CLI、✅ M2 adapters + recommend(2026-07-21)
 - ✅ M3 MCP server + plugin + notarize(2026-07-22;release v0.3.0)
 - ✅ M4 cloud reference + `compare` + `evidence ingest`(2026-07-22)
-- Backlog:auto-routing(`--engine auto`)、fallback chain、quality-estimand
-  ingest、PaddleOCR-VL `\( \)` → `$` 正規化(spec Y3)
+- ✅ P2 auto-routing(預設)+ fallback chain + workflow skills(2026-07-22;
+  v0.4.0)。repo 已公開 + security baseline 全綠;plugin 已實裝驗證
+- Backlog:quality-estimand ingest、PaddleOCR-VL `\( \)` → `$` 正規化(spec Y3)
 
 ## Cloud reference 備忘(M4)
 
