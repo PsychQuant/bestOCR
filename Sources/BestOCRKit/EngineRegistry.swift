@@ -7,9 +7,13 @@ public struct EngineRegistry: Sendable {
         self.engines = engines
     }
 
-    /// M1 roster: Vision + tesseract + one VLM engine per admitted profile.
+    /// M2 roster: classical (Vision, tesseract, external Python tools) then
+    /// one VLM engine per admitted profile.
     public static func standard(ollamaHost: String = "localhost:11434") -> EngineRegistry {
-        var engines: [any OCREngine] = [VisionEngine(), TesseractEngine()]
+        var engines: [any OCREngine] = [
+            VisionEngine(), TesseractEngine(),
+            ExternalToolEngine.rapidocr(), ExternalToolEngine.cnocr(), ExternalToolEngine.surya(),
+        ]
         engines.append(contentsOf: ModelProfile.all.map {
             VLMEngine(profile: $0, host: ollamaHost)
         })

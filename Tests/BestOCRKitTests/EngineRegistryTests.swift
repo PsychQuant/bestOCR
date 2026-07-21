@@ -28,10 +28,11 @@ struct StubEngine: OCREngine {
 }
 
 struct EngineRegistryTests {
-    @Test func standardRosterHasFiveEngines() {
+    @Test func standardRosterHasEightEngines() {
         let registry = EngineRegistry.standard()
         #expect(registry.engines.map(\.id) ==
-                ["vision", "tesseract", "vlm.glm-ocr", "vlm.ovisocr2", "vlm.paddleocr-vl"])
+                ["vision", "tesseract", "ext.rapidocr", "ext.cnocr", "ext.surya",
+                 "vlm.glm-ocr", "vlm.ovisocr2", "vlm.paddleocr-vl"])
     }
 
     @Test func lookupByIDAndUnknownReturnsNil() {
