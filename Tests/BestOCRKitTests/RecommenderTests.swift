@@ -84,6 +84,23 @@ struct RecommenderTests {
         #expect(answer.entries.first?.engineID == "vlm.ovisocr2")   // faster first
     }
 
+    @Test func cloudReferenceEnginesAreNeverRankedNorListed() {
+        // Spec §6.1.3: cloud is reference-only — excluded even with matching rows.
+        let cloudRegistry = EngineRegistry(engines: [
+            RecommenderTests.mathEngine("vlm.glm-ocr"),
+            CloudReferenceEngine(provider: .claude),
+        ])
+        let evidence = EvidenceStore(rows: [
+            Self.row(model: "glm-ocr", tier: "T2", estimand: "quality.word_recall", value: 0.98),
+            Self.row(model: "claude-opus-4-8", tier: "T2", estimand: "quality.word_recall", value: 0.99),
+        ])
+        let answer = Recommender.recommend(
+            workload: WorkloadSpec(docType: "math_pdf", priority: .quality),
+            registry: cloudRegistry, evidence: evidence)
+        #expect(!answer.entries.contains { $0.engineID.hasPrefix("cloud.") })
+        #expect(answer.entries.map(\.engineID) == ["vlm.glm-ocr"])
+    }
+
     @Test func modelToEngineMatchingHandlesAnovaTags() {
         // Evidence rows say "glm-ocr"; live VLM engines carry "-anova:q8_0" tags.
         #expect(Recommender.baseModel("glm-ocr-anova:q8_0") == "glm-ocr")

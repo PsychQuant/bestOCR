@@ -7,8 +7,9 @@ public struct EngineRegistry: Sendable {
         self.engines = engines
     }
 
-    /// M2 roster: classical (Vision, tesseract, external Python tools) then
-    /// one VLM engine per admitted profile.
+    /// M4 roster: classical (Vision, tesseract, external Python tools), one
+    /// VLM engine per admitted profile, then the cloud reference tier
+    /// (probe-gated by API-key env; never ranked by recommend).
     public static func standard(ollamaHost: String = "localhost:11434") -> EngineRegistry {
         var engines: [any OCREngine] = [
             VisionEngine(), TesseractEngine(),
@@ -16,6 +17,9 @@ public struct EngineRegistry: Sendable {
         ]
         engines.append(contentsOf: ModelProfile.all.map {
             VLMEngine(profile: $0, host: ollamaHost)
+        })
+        engines.append(contentsOf: CloudProvider.allCases.map {
+            CloudReferenceEngine(provider: $0)
         })
         return EngineRegistry(engines: engines)
     }
