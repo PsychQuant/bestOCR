@@ -1,0 +1,7 @@
+{
+  "bestocr": {
+    "type": "stdio",
+    "command": "${CLAUDE_PLUGIN_ROOT}/bin/bestocr-mcp-wrapper.sh",
+    "description": "bestocr-mcp MCP server — evidence-based multi-engine OCR over stdio. Tools: ocr / recommend / list_engines / list_models / ocr_status / ocr_result. Heavy OCR is single-flighted; VLM warmth lives in the local Ollama server."
+  }
+}

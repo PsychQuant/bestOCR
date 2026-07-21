@@ -1,0 +1,9 @@
+{
+  "name": "bestocr",
+  "version": "0.3.0",
+  "description": "bestOCR for agents: the bestocr-mcp MCP server (multi-engine OCR routing — ocr/recommend/list_engines/list_models + ocr_status/ocr_result async polling, auto-downloaded on install). Local engines only: Apple Vision, tesseract, Python-tool adapters, Ollama VLMs; recommendations are evidence-labelled, never guesses.",
+  "author": {
+    "name": "PsychQuant",
+    "url": "https://github.com/PsychQuant/bestOCR"
+  }
+}
