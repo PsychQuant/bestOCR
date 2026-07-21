@@ -32,7 +32,7 @@ struct VLMEngineTests {
         let engine = VLMEngine(profile: .glmOCR, modelOverride: "glm-ocr-anova:q4_K_M")
         #expect(engine.resolvedModelTag == "glm-ocr-anova:q4_K_M")
         let defaulted = VLMEngine(profile: .glmOCR)
-        #expect(defaulted.resolvedModelTag == "glm-ocr")
+        #expect(defaulted.resolvedModelTag == "glm-ocr-anova:q8_0")
     }
 
     @Test func probeAgainstDeadPortReportsServerDown() async {

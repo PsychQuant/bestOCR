@@ -12,19 +12,22 @@ public struct ModelProfile: Sendable {
     public static let sharedInstructionPrompt =
         "Convert this document page to Markdown. Render all mathematical formulas as LaTeX (inline $...$, display $$...$$). Reproduce headings, lists and tables. Output only the transcription, no commentary."
 
+    // Default tags are the SHA256-pinned -anova builds present on this
+    // machine (verified live 2026-07-21), at nominal-8-bit per the
+    // instrument's E2 convention. CLI --model overrides for other quants.
     public static let glmOCR = ModelProfile(
-        id: "glm-ocr", ollamaModel: "glm-ocr",
+        id: "glm-ocr", ollamaModel: "glm-ocr-anova:q8_0",
         prompt: sharedInstructionPrompt, outputLevel: .mathMarkdown)
 
     public static let ovisOCR2 = ModelProfile(
-        id: "ovisocr2", ollamaModel: "ovisocr2",
+        id: "ovisocr2", ollamaModel: "ovisocr2-anova:q8_0",
         prompt: sharedInstructionPrompt, outputLevel: .mathMarkdown)
 
     /// candidates.json caveat (2026-07-20): REQUIRES the native task prompt —
     /// generic instruction prompts yield degenerate loops. Math arrives as
     /// \( \) not $ (delimiter normalization is deferred to M2 output work).
     public static let paddleOCRVL = ModelProfile(
-        id: "paddleocr-vl", ollamaModel: "paddleocr-vl",
+        id: "paddleocr-vl", ollamaModel: "paddleocr-vl-anova:q8_0",
         prompt: "OCR:", outputLevel: .mathMarkdown)
 
     public static let all: [ModelProfile] = [glmOCR, ovisOCR2, paddleOCRVL]
