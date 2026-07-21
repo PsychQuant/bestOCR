@@ -55,18 +55,29 @@ if $NEED_DOWNLOAD; then
     echo "$BINARY_NAME: $REASON — downloading from $REPO..." >&2
     mkdir -p "$INSTALL_DIR"
 
-    # Try pinned tag first, then fall back to latest release.
+    # Release asset URLs are deterministic — try the direct URL first (the
+    # download host is not subject to the anonymous API rate limit, which can
+    # otherwise break installs behind shared NAT/CI IPs). Fall back to API
+    # discovery (pinned tag, then latest) only when the direct path fails.
     URL=""
-    for API_URL in \
-        "${DESIRED_VERSION:+https://api.github.com/repos/$REPO/releases/tags/v$DESIRED_VERSION}" \
-        "https://api.github.com/repos/$REPO/releases/latest"
-    do
-        [[ -z "$API_URL" ]] && continue
-        URL=$(curl -sL --max-time 30 "$API_URL" 2>/dev/null \
-            | grep '"browser_download_url"' | grep "/$BINARY_NAME\"" | head -1 \
-            | sed 's/.*"\(https[^"]*\)".*/\1/')
-        [[ -n "$URL" ]] && break
-    done
+    if [[ -n "$DESIRED_VERSION" ]]; then
+        DIRECT_URL="https://github.com/$REPO/releases/download/v$DESIRED_VERSION/$BINARY_NAME"
+        if curl -sfIL --max-time 30 "$DIRECT_URL" >/dev/null 2>&1; then
+            URL="$DIRECT_URL"
+        fi
+    fi
+    if [[ -z "$URL" ]]; then
+        for API_URL in \
+            "${DESIRED_VERSION:+https://api.github.com/repos/$REPO/releases/tags/v$DESIRED_VERSION}" \
+            "https://api.github.com/repos/$REPO/releases/latest"
+        do
+            [[ -z "$API_URL" ]] && continue
+            URL=$(curl -sL --max-time 30 "$API_URL" 2>/dev/null \
+                | grep '"browser_download_url"' | grep "/$BINARY_NAME\"" | head -1 \
+                | sed 's/.*"\(https[^"]*\)".*/\1/')
+            [[ -n "$URL" ]] && break
+        done
+    fi
 
     if [[ -z "$URL" ]]; then
         if [[ -x "$BINARY" ]]; then
