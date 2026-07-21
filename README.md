@@ -5,15 +5,41 @@ sibling of bestASR. The product answers "which model / quant / DPI / platform
 should I run for *this* document workload?" with numbers that trace back to a
 pre-registered benchmark, never to vibes.
 
-**Status: M2 — multi-engine + recommend.** `bestocr run` executes any locally
+**Status: M3 — MCP server + plugin.** `bestocr run` executes any locally
 available engine (Apple Vision, tesseract, rapidocr/cnocr/surya via
 protocol-v1 Python adapters, Ollama VLMs); `bestocr recommend` returns an
 evidence-labelled answer — a tier-named ranking when measured rows exist in
 `evidence/rows.jsonl`, otherwise an honest *evidence-pending* capability
-filter. Every run records the full evidence condition tuple to
-`~/.bestocr/runlog.jsonl`. MCP + plugin land in M3; cloud reference +
-`evidence ingest` in M4 (see
+filter. Agents get the same via `bestocr-mcp` (six tools incl. async job
+polling; heavy OCR single-flighted). Every run records the full evidence
+condition tuple to `~/.bestocr/runlog.jsonl`. Cloud reference + `evidence
+ingest` land in M4 (see
 `docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`).
+
+## Install for AI agents (Claude Code)
+
+This repo doubles as a Claude Code plugin marketplace. Installing the plugin
+gives an agent the **MCP server** (`bestocr-mcp`, a notarized binary
+auto-downloaded on first use):
+
+```bash
+claude plugin marketplace add PsychQuant/bestOCR
+claude plugin install bestocr@bestocr
+```
+
+MCP tools: `ocr` (sync, or `async: true` → `job_id`), `recommend`,
+`list_engines`, `list_models`, `ocr_status`, `ocr_result` (long-poll). The
+server process persists across calls; VLM warmth lives in the local Ollama
+server (`keep_alive`), and concurrent heavy OCR is serialized so the model
+server and Python tools are never overloaded.
+
+## Release (maintainer)
+
+```bash
+make release-signed     # build + Developer ID sign + notarize + sha256
+gh release create v<semver> .build/release/bestocr-mcp .build/release/bestocr \
+    .build/release/*.sha256
+```
 
 ## Architecture — where OCR capability actually lives
 
