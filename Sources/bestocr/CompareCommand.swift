@@ -69,6 +69,17 @@ struct Compare: AsyncParsableCommand {
 
         let recall = Comparator.tokenRecall(candidate: localResult.text,
                                             reference: cloudResult.text)
+
+        // Log the local side with the quality stat attached so the compare
+        // metric has a path into evidence — via the explicit ingest gate
+        // only, like every other runlog entry (spec §6.2).
+        let localMD = outDir.appendingPathComponent("\(stem).\(localResult.engineID).md")
+        let entry = RunLogEntry(
+            from: localResult, input: input, output: localMD.path,
+            quality: .init(estimand: Comparator.formulaID, value: recall,
+                           reference: "\(cloud.id)/\(cloudResult.condition.model)"))
+        try RunLog.default().append(entry)
+
         func total(_ result: OCRResult) -> String {
             String(format: "%.1f", result.pages.map(\.seconds).reduce(0, +))
         }
@@ -77,5 +88,6 @@ struct Compare: AsyncParsableCommand {
         print("  \(Comparator.formulaID) = \(String(format: "%.3f", recall))")
         print("  note: reference is a cloud model, not ground truth — not comparable to word_recall vs pdftotext")
         print("  outputs: \(outDir.path)/\(stem).<engine>.md")
+        print("  run id: \(entry.id) — `bestocr evidence ingest \(entry.id.prefix(8))` promotes speed + quality rows to T2")
     }
 }

@@ -10,7 +10,7 @@ struct Evidence: AsyncParsableCommand {
 
     struct Ingest: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Promote one runlog entry to T2 evidence rows (speed.ms_per_page). Explicit by design — nothing auto-promotes.")
+            abstract: "Promote one runlog entry to T2 evidence rows: speed.ms_per_page, plus the compare quality metric when the entry carries one. Explicit by design — nothing auto-promotes.")
 
         @Argument(help: "Run id from the runlog (full id or unique prefix).")
         var runID: String

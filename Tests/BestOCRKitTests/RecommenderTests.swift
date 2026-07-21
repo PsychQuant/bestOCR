@@ -101,6 +101,55 @@ struct RecommenderTests {
         #expect(answer.entries.map(\.engineID) == ["vlm.glm-ocr"])
     }
 
+    @Test func qualityPriorityFallsBackToTokenRecallVsCloud() {
+        // No word_recall rows anywhere → the ingested compare metric is the
+        // best available quality evidence and may carry the ranking.
+        let evidence = EvidenceStore(rows: [
+            Self.row(model: "glm-ocr", tier: "T2",
+                     estimand: "quality.token_recall_vs_cloud@v1", value: 0.93),
+            Self.row(model: "ovisocr2", tier: "T2",
+                     estimand: "quality.token_recall_vs_cloud@v1", value: 0.88),
+        ])
+        let answer = Recommender.recommend(
+            workload: WorkloadSpec(docType: "math_pdf", priority: .quality, needsMath: true),
+            registry: registry, evidence: evidence)
+        #expect(answer.mode == .ranked(tier: "T2"))
+        #expect(answer.entries.first?.engineID == "vlm.glm-ocr")
+        // The note must name which estimand carried the ranking.
+        #expect(answer.entries.first?.note.contains("token_recall_vs_cloud@v1") == true)
+    }
+
+    @Test func wordRecallAndTokenRecallNeverMixInOneRanking() {
+        // glm has word_recall; ovis has only the cloud-compare metric.
+        // Preference order picks word_recall — ovis must NOT be ranked
+        // beside it on a different estimand (schema.md hard rule 2).
+        let evidence = EvidenceStore(rows: [
+            Self.row(model: "glm-ocr", tier: "T2",
+                     estimand: "quality.word_recall", value: 0.95),
+            Self.row(model: "ovisocr2", tier: "T2",
+                     estimand: "quality.token_recall_vs_cloud@v1", value: 0.99),
+        ])
+        let answer = Recommender.recommend(
+            workload: WorkloadSpec(docType: "math_pdf", priority: .quality, needsMath: true),
+            registry: registry, evidence: evidence)
+        let ranked = answer.entries.filter { $0.note.contains("quality.word_recall") }
+        #expect(ranked.map(\.engineID) == ["vlm.glm-ocr"])
+        #expect(answer.citations == ["test:glm-ocr:T2"])
+        let ovis = answer.entries.first { $0.engineID == "vlm.ovisocr2" }
+        #expect(ovis?.note.contains("0.99") == false)
+    }
+
+    @Test func speedPriorityNeverFallsBackToQualityEstimands() {
+        let evidence = EvidenceStore(rows: [
+            Self.row(model: "glm-ocr", tier: "T2",
+                     estimand: "quality.token_recall_vs_cloud@v1", value: 0.93),
+        ])
+        let answer = Recommender.recommend(
+            workload: WorkloadSpec(docType: "math_pdf", priority: .speed, needsMath: true),
+            registry: registry, evidence: evidence)
+        #expect(answer.mode == .evidencePending)
+    }
+
     @Test func modelToEngineMatchingHandlesAnovaTags() {
         // Evidence rows say "glm-ocr"; live VLM engines carry "-anova:q8_0" tags.
         #expect(Recommender.baseModel("glm-ocr-anova:q8_0") == "glm-ocr")

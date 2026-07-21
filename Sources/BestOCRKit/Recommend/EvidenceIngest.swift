@@ -2,8 +2,9 @@ import Foundation
 
 /// The explicit runlog → evidence gate (spec §6.2): nothing auto-promotes;
 /// a human runs `bestocr evidence ingest <run-id>` and the selected entry
-/// becomes T2 rows. M4 ingests `speed.ms_per_page` only — quality estimands
-/// need a reference the runlog doesn't carry (documented limitation).
+/// becomes T2 rows: `speed.ms_per_page` always, plus the entry's quality
+/// stat when `compare` attached one (the runlog itself carries no reference,
+/// so plain runs stay speed-only).
 public enum EvidenceIngest {
     /// Convert one runlog entry into evidence rows. Thermal states other than
     /// nominal become a caveat (schema.md hard rule 5), never a silent drop.
@@ -14,7 +15,7 @@ public enum EvidenceIngest {
         let caveat: String? = hotPages.isEmpty ? nil
             : "thermal non-nominal on page(s) "
                 + hotPages.map { "\($0.page) (\($0.thermalState))" }.joined(separator: ", ")
-        return [
+        var rows = [
             EvidenceRow(estimand: "speed.ms_per_page",
                         value: (meanSeconds * 1000).rounded(),
                         condition: entry.condition,
@@ -22,6 +23,18 @@ public enum EvidenceIngest {
                         source: "runlog:\(entry.id)",
                         caveat: caveat)
         ]
+        if let quality = entry.quality {
+            // The referent is disclaimed on every row (schema.md hard rule 2):
+            // a cloud model's output is not ground truth and this estimand is
+            // never comparable to word_recall.
+            rows.append(EvidenceRow(estimand: quality.estimand,
+                                    value: quality.value,
+                                    condition: entry.condition,
+                                    tier: "T2",
+                                    source: "runlog:\(entry.id)",
+                                    caveat: "reference = \(quality.reference) — a cloud model output, not ground truth; not comparable to word_recall"))
+        }
+        return rows
     }
 
     /// Locate a runlog entry by exact id or unique prefix. Missing or

@@ -39,6 +39,30 @@ struct RunLogTests {
         #expect(e1.timestamp.contains("T"))   // ISO8601 marker
     }
 
+    @Test func qualityStatRoundTripsAndOldLinesDecodeWithoutIt() throws {
+        // Pre-quality runlog lines have no "quality" key — they must keep
+        // decoding (quality == nil), and nil must keep encoding key-free so
+        // old and new binaries read each other's logs.
+        let plain = RunLogEntry(from: sampleResult(), input: "/a.pdf", output: "/o.md")
+        let encoder = JSONEncoder()
+        let plainJSON = String(decoding: try encoder.encode(plain), as: UTF8.self)
+        #expect(!plainJSON.contains("\"quality\""))
+        let decodedPlain = try JSONDecoder().decode(RunLogEntry.self,
+                                                    from: Data(plainJSON.utf8))
+        #expect(decodedPlain.quality == nil)
+
+        let stat = RunLogEntry.QualityStat(estimand: Comparator.formulaID,
+                                           value: 0.91,
+                                           reference: "cloud.gemini/gemini-2.5-flash")
+        let withQuality = RunLogEntry(from: sampleResult(), input: "/a.pdf",
+                                      output: "/o.md", quality: stat)
+        let decoded = try JSONDecoder().decode(RunLogEntry.self,
+                                               from: try encoder.encode(withQuality))
+        #expect(decoded.quality?.estimand == "quality.token_recall_vs_cloud@v1")
+        #expect(decoded.quality?.value == 0.91)
+        #expect(decoded.quality?.reference == "cloud.gemini/gemini-2.5-flash")
+    }
+
     @Test func defaultHonoursEnvOverride() {
         setenv("BESTOCR_RUNLOG", "/tmp/custom-runlog.jsonl", 1)
         defer { unsetenv("BESTOCR_RUNLOG") }

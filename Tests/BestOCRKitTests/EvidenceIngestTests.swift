@@ -3,7 +3,8 @@ import Testing
 @testable import BestOCRKit
 
 struct EvidenceIngestTests {
-    func entry(seconds: [Double], thermal: String = "nominal") -> RunLogEntry {
+    func entry(seconds: [Double], thermal: String = "nominal",
+               quality: RunLogEntry.QualityStat? = nil) -> RunLogEntry {
         let condition = ConditionTuple(model: "vision", quant: "n/a", dpi: 150,
                                        docType: "screenshot", platform: "vision",
                                        hardware: "test", instrument: BestOCRVersion.string)
@@ -12,7 +13,7 @@ struct EvidenceIngestTests {
                                    PageResult(page: index + 1, text: "x", seconds: secs,
                                               thermalState: thermal, degenerateFlagged: false)
                                }, condition: condition)
-        return RunLogEntry(from: result, input: "/a.png", output: "/o.md")
+        return RunLogEntry(from: result, input: "/a.png", output: "/o.md", quality: quality)
     }
 
     @Test func speedRowFromMeanPageSeconds() {
@@ -43,6 +44,29 @@ struct EvidenceIngestTests {
         #expect(throws: OCREngineError.self) {
             _ = try EvidenceIngest.findEntry(id: "zzzz-none", in: file)
         }
+    }
+
+    @Test func qualityStatYieldsAdditionalQualityRow() {
+        let stat = RunLogEntry.QualityStat(estimand: Comparator.formulaID,
+                                           value: 0.873,
+                                           reference: "cloud.claude/claude-opus-4-8")
+        let rows = EvidenceIngest.rows(from: entry(seconds: [1.0], quality: stat))
+        #expect(rows.count == 2)
+        let quality = rows[1]
+        #expect(quality.estimand == "quality.token_recall_vs_cloud@v1")
+        #expect(quality.value == 0.873)
+        #expect(quality.tier == "T2")
+        #expect(quality.source.hasPrefix("runlog:"))
+        // Schema discipline: the referent must be named and disclaimed —
+        // a cloud model output is not ground truth, never word_recall.
+        #expect(quality.caveat?.contains("cloud.claude/claude-opus-4-8") == true)
+        #expect(quality.caveat?.contains("not ground truth") == true)
+        #expect(quality.condition.docType == "screenshot")
+    }
+
+    @Test func entryWithoutQualityStatYieldsSpeedRowOnly() {
+        let rows = EvidenceIngest.rows(from: entry(seconds: [1.0]))
+        #expect(rows.map(\.estimand) == ["speed.ms_per_page"])
     }
 
     @Test func appendWritesLoadableRows() throws {

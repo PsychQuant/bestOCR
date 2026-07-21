@@ -43,10 +43,17 @@ public enum Recommender {
         return id
     }
 
-    static func estimand(for priority: WorkloadSpec.Priority) -> (name: String, higherIsBetter: Bool) {
+    /// Estimand preference per priority. Exactly ONE estimand carries any
+    /// ranking (schema.md hard rule 2) — the list is a fallback order, not a
+    /// blend: word_recall (ground-truth referent) outranks the cloud-compare
+    /// metric, which is used only when no word_recall rows exist. Speed never
+    /// borrows quality numbers.
+    static func estimands(for priority: WorkloadSpec.Priority) -> [(name: String, higherIsBetter: Bool)] {
         switch priority {
-        case .quality, .balanced: return ("quality.word_recall", true)
-        case .speed: return ("speed.ms_per_page", false)
+        case .quality, .balanced:
+            return [("quality.word_recall", true), (Comparator.formulaID, true)]
+        case .speed:
+            return [("speed.ms_per_page", false)]
         }
     }
 
@@ -63,13 +70,22 @@ public enum Recommender {
             return true
         }
 
-        // 2. Rankable rows: matching doc type + the priority's estimand,
-        //    T3 excluded (schema.md: never ranked).
-        let wanted = estimand(for: workload.priority)
-        let matching = evidence.rows(docType: workload.docType)
-            .filter { $0.estimand == wanted.name && $0.tier != "T3" }
+        // 2. Rankable rows: matching doc type + the first estimand in the
+        //    priority's preference order that has usable rows, T3 excluded
+        //    (schema.md: never ranked, never blended across estimands).
         let candidateKeys = Set(candidates.map(engineModelKey))
-        let usable = matching.filter { candidateKeys.contains(baseModel($0.condition.model)) }
+        let docRows = evidence.rows(docType: workload.docType)
+        var wanted = estimands(for: workload.priority)[0]
+        var usable: [EvidenceRow] = []
+        for preference in estimands(for: workload.priority) {
+            let matching = docRows.filter { $0.estimand == preference.name && $0.tier != "T3" }
+                .filter { candidateKeys.contains(baseModel($0.condition.model)) }
+            if !matching.isEmpty {
+                wanted = preference
+                usable = matching
+                break
+            }
+        }
 
         guard !usable.isEmpty else {
             // 3a. Honest evidence-pending: capability filtering only.
