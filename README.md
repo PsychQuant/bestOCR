@@ -5,10 +5,15 @@ sibling of bestASR. The product answers "which model / quant / DPI / platform
 should I run for *this* document workload?" with numbers that trace back to a
 pre-registered benchmark, never to vibes.
 
-**Status: scaffold.** The instrument (measureOCR) is production-ready and
-pinned by article 1; the recommendation layer ships only after the
-pre-registered sweep produces real evidence. `recommend` before that returns
-an honest *evidence-pending* answer, not a guess.
+**Status: M1 — engine layer + CLI.** `bestocr run` executes any locally
+available engine (Apple Vision, tesseract, Ollama VLMs) with explicit
+selection; every run records the full evidence condition tuple to
+`~/.bestocr/runlog.jsonl`. `recommend`, auto-routing, MCP, and external
+Python adapters land in M2–M4 (see
+`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`). The
+recommendation layer still ships only after the pre-registered sweep produces
+real evidence — `recommend` before that returns an honest *evidence-pending*
+answer, not a guess.
 
 ## Architecture — where OCR capability actually lives
 
@@ -33,12 +38,30 @@ tools keep their OCR capability untouched.
 ```
 repos/measureOCR      git submodule → github.com/PsychQuant/measureOCR
                       (formerly macdoc/cli/FastOCR; see docs/migration-2026-07-18.md)
+Sources/BestOCRKit    engine layer: OCREngine protocol, engines, router pipeline
+Sources/bestocr       CLI (thin shell over BestOCRKit)
+Tests/BestOCRKitTests Swift Testing suite (programmatic fixtures, no binaries)
 evidence/
   schema.md           the three-tier evidence-labelling contract (read this first)
   candidates.json     candidate model inventory with source-tier labels
 docs/
   migration-2026-07-18.md   how and why measureOCR moved here
 ```
+
+## Usage (M1)
+
+```bash
+swift build -c release
+.build/release/bestocr list-engines             # probe table + install hints
+.build/release/bestocr run page.png --engine vision --doc-type screenshot
+.build/release/bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
+    --doc-type math_pdf --out out/
+```
+
+Engine ids: `vision`, `tesseract`, `vlm.glm-ocr`, `vlm.ovisocr2`,
+`vlm.paddleocr-vl` (VLM engines need a running `ollama serve` with the model
+present; defaults are the SHA256-pinned `-anova:q8_0` builds, `--model`
+overrides the tag, e.g. `--model glm-ocr-anova:q4_K_M`).
 
 ## Evidence discipline (the core design constraint)
 
