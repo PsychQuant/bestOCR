@@ -46,10 +46,11 @@ public actor BestOCRMCPServer {
         [
             Tool(
                 name: "ocr",
-                description: "OCR a PDF or image with an explicitly chosen local engine "
-                    + "(see list_engines). Writes <stem>.md + <stem>.meta.json and logs the "
-                    + "evidence condition tuple. Long documents: pass async=true, then poll "
-                    + "ocr_status / ocr_result.",
+                description: "OCR a PDF or image. Default engine is auto — recommend-ordered "
+                    + "routing with a fallback chain past unavailable/failing engines; pass "
+                    + "engine to pin one (no fallback). Writes <stem>.md + <stem>.meta.json "
+                    + "and logs the evidence condition tuple. Long documents: pass "
+                    + "async=true, then poll ocr_status / ocr_result.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
@@ -59,7 +60,15 @@ public actor BestOCRMCPServer {
                         ]),
                         "engine": .object([
                             "type": .string("string"),
-                            "description": .string("Engine id from list_engines (e.g. vision, tesseract, ext.rapidocr, vlm.glm-ocr)"),
+                            "description": .string("Engine id from list_engines (e.g. vision, vlm.glm-ocr) or \"auto\" (default: recommend-ordered routing + fallback)"),
+                        ]),
+                        "priority": .object([
+                            "type": .string("string"),
+                            "description": .string("auto mode: quality | speed | balanced (default balanced)"),
+                        ]),
+                        "math": .object([
+                            "type": .string("boolean"),
+                            "description": .string("auto mode: require math-aware output"),
                         ]),
                         "out_dir": .object([
                             "type": .string("string"),
@@ -90,7 +99,7 @@ public actor BestOCRMCPServer {
                             "description": .string("Return a job_id immediately; poll ocr_status / ocr_result"),
                         ]),
                     ]),
-                    "required": .array([.string("input_path"), .string("engine")]),
+                    "required": .array([.string("input_path")]),
                 ]),
                 annotations: .init(readOnlyHint: false, openWorldHint: false)
             ),
@@ -245,7 +254,7 @@ public actor BestOCRMCPServer {
         // Parse outside the gate: malformed calls fail fast and in parallel —
         // only real OCR work queues (bestASR F1/F2 lesson).
         let inputPath = try requiredString("input_path", in: args)
-        let engineID = try requiredString("engine", in: args)
+        let engineID = args["engine"]?.stringValue ?? "auto"
         let outDir = args["out_dir"]?.stringValue
             ?? FileManager.default.temporaryDirectory
                 .appendingPathComponent("bestocr-mcp-\(UUID().uuidString)").path
@@ -268,17 +277,35 @@ public actor BestOCRMCPServer {
             }
             effectiveRegistry = EngineRegistry(engines: engines)
         }
+        let priorityRaw = args["priority"]?.stringValue ?? "balanced"
+        guard let priority = WorkloadSpec.Priority(rawValue: priorityRaw) else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "priority must be one of: quality, speed, balanced")
+        }
+        let needsMath = args["math"]?.boolValue ?? false
         let gate = ocrGate
         let runLog = self.runLog
+        let evidenceURL = self.evidenceURL
         let registrySnapshot = effectiveRegistry
         let work: @Sendable () async throws -> String = {
             try await gate.run {
-                let summary = try await RunPipeline.execute(
-                    inputPath: inputPath, engineID: engineID, dpi: dpi,
-                    pageSpec: pageSpec, languages: languages, docType: docType,
-                    outDir: URL(fileURLWithPath: outDir),
-                    registry: registrySnapshot, runLog: runLog)
-                return Self.renderRunSummary(engineID: engineID, summary: summary)
+                let summary: RunSummary
+                if engineID == "auto" {
+                    let evidence = try EvidenceStore.load(from: evidenceURL)
+                    summary = try await RunPipeline.executeAuto(
+                        inputPath: inputPath, dpi: dpi, pageSpec: pageSpec,
+                        languages: languages, docType: docType,
+                        priority: priority, needsMath: needsMath,
+                        outDir: URL(fileURLWithPath: outDir),
+                        registry: registrySnapshot, evidence: evidence, runLog: runLog)
+                } else {
+                    summary = try await RunPipeline.execute(
+                        inputPath: inputPath, engineID: engineID, dpi: dpi,
+                        pageSpec: pageSpec, languages: languages, docType: docType,
+                        outDir: URL(fileURLWithPath: outDir),
+                        registry: registrySnapshot, runLog: runLog)
+                }
+                return Self.renderRunSummary(summary: summary)
             }
         }
         if args["async"]?.boolValue == true {
@@ -356,14 +383,19 @@ public actor BestOCRMCPServer {
         return lines.joined(separator: "\n")
     }
 
-    static func renderRunSummary(engineID: String, summary: RunSummary) -> String {
+    static func renderRunSummary(summary: RunSummary) -> String {
         let pageCount = summary.result.pages.count
         let total = summary.result.pages.map(\.seconds).reduce(0, +)
-        var lines = [
-            "✓ \(engineID): \(pageCount) page(s) in \(String(format: "%.1f", total))s",
+        var lines: [String] = []
+        // Fallback trail (auto mode) — every hop visible, never silent.
+        for attempt in summary.attempts where attempt.failure != nil {
+            lines.append("↷ \(attempt.engineID) skipped: \(attempt.failure!)")
+        }
+        lines.append(contentsOf: [
+            "✓ \(summary.result.engineID): \(pageCount) page(s) in \(String(format: "%.1f", total))s",
             "markdown: \(summary.outputMarkdown.path)",
             "meta: \(summary.outputMeta.path)",
-        ]
+        ])
         if summary.result.pages.contains(where: \.degenerateFlagged) {
             lines.append("⚠ repetition guard tripped on at least one page — inspect the output")
         }

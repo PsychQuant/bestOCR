@@ -122,6 +122,18 @@ struct ServerTests {
         #expect(firstText(status).contains("done"))
     }
 
+    @Test func ocrWithoutEngineRoutesAutomatically() async throws {
+        let (server, tmpDir) = try makeServer()
+        let img = try fixtureImage(in: tmpDir)
+        let result = await server.execute(name: "ocr", arguments: [
+            "input_path": .string(img.path),
+            "out_dir": .string(tmpDir.appendingPathComponent("auto-out").path),
+            "doc_type": .string("screenshot"),
+        ])
+        #expect(result.isError != true)
+        #expect(firstText(result).contains("✓ stub"))   // auto picked the only stub
+    }
+
     @Test func recommendEvidencePendingRendered() async throws {
         let (server, _) = try makeServer()
         let result = await server.execute(name: "recommend", arguments: [
