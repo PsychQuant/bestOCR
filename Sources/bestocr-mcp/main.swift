@@ -1,2 +1,5 @@
-// Placeholder — real entry lands with BestOCRMCPServer (M3 Task 3).
-print("bestocr-mcp: server lands in M3-T3")
+import BestOCRMCPCore
+
+// Thin entry — everything testable lives in BestOCRMCPCore.
+let server = BestOCRMCPServer()
+try await server.run()
