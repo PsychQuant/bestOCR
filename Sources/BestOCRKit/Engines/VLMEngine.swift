@@ -82,10 +82,8 @@ public struct VLMEngine: OCREngine {
                                      message: "page \(page.pageNumber): \(error.localizedDescription)")
             }
             let seconds = ProcessInfo.processInfo.systemUptime - t0
-            let flagged = fuse.flags(raw)
-            var text = raw
+            let (text, flagged) = postprocess(raw)
             if flagged {
-                text += "\n<!-- WARN: repetition-guard tripped — output may be degenerate -->"
                 FileHandle.standardError.write(Data("[\(id)] page \(page.pageNumber): repetition guard tripped\n".utf8))
             }
             pageResults.append(PageResult(page: page.pageNumber, text: text,
@@ -99,6 +97,19 @@ public struct VLMEngine: OCREngine {
                                        hardware: HostInfo.hardwareLabel(),
                                        instrument: BestOCRVersion.string)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
+    }
+
+    /// Post-generation shaping shared by every page: profile-gated Y3
+    /// delimiter normalization, then the repetition-guard marker (the fuse
+    /// reads the raw text — normalization must not mask a degenerate loop).
+    func postprocess(_ raw: String) -> (text: String, flagged: Bool) {
+        let flagged = fuse.flags(raw)
+        var text = profile.normalizesMathDelimiters
+            ? MathDelimiterNormalizer.normalize(raw) : raw
+        if flagged {
+            text += "\n<!-- WARN: repetition-guard tripped — output may be degenerate -->"
+        }
+        return (text, flagged)
     }
 
     /// Quant from the Ollama tag suffix ("glm-ocr-anova:q4_K_M" → "q4_K_M");

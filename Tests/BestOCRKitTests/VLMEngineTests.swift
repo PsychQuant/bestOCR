@@ -35,6 +35,35 @@ struct VLMEngineTests {
         #expect(defaulted.resolvedModelTag == "glm-ocr-anova:q8_0")
     }
 
+    @Test func onlyPaddleProfileNormalizesMathDelimiters() {
+        // Y3 delimiter caveat is PaddleOCR-VL-specific (candidates.json);
+        // engines that already emit $ must never be rewritten.
+        #expect(ModelProfile.paddleOCRVL.normalizesMathDelimiters)
+        #expect(!ModelProfile.glmOCR.normalizesMathDelimiters)
+        #expect(!ModelProfile.ovisOCR2.normalizesMathDelimiters)
+    }
+
+    @Test func paddlePostprocessNormalizesDelimiters() {
+        let engine = VLMEngine(profile: .paddleOCRVL)
+        let (text, flagged) = engine.postprocess(#"inline \(x\) and \[y\]"#)
+        #expect(text == "inline $x$ and $$y$$")
+        #expect(!flagged)
+    }
+
+    @Test func glmPostprocessLeavesDelimitersAlone() {
+        let engine = VLMEngine(profile: .glmOCR)
+        let (text, _) = engine.postprocess(#"literal \(x\) stays"#)
+        #expect(text == #"literal \(x\) stays"#)
+    }
+
+    @Test func postprocessStillAppendsRepetitionWarning() {
+        let engine = VLMEngine(profile: .paddleOCRVL)
+        let loop = Array(repeating: "the", count: 60).joined(separator: " ")
+        let (text, flagged) = engine.postprocess(loop)
+        #expect(flagged)
+        #expect(text.contains("repetition-guard tripped"))
+    }
+
     @Test func probeAgainstDeadPortReportsServerDown() async {
         let engine = VLMEngine(profile: .glmOCR, host: "localhost:59999")
         let availability = await engine.probe()

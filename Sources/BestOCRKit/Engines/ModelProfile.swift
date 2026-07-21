@@ -6,6 +6,19 @@ public struct ModelProfile: Sendable {
     public let ollamaModel: String  // default Ollama tag; CLI --model overrides
     public let prompt: String
     public let outputLevel: OutputLevel
+    /// Y3 delimiter caveat (candidates.json): the model emits \( \) math —
+    /// VLMEngine rewrites matched pairs to $ / $$ so cross-engine output (and
+    /// the instrument's $-density estimand) stays comparable.
+    public let normalizesMathDelimiters: Bool
+
+    public init(id: String, ollamaModel: String, prompt: String,
+                outputLevel: OutputLevel, normalizesMathDelimiters: Bool = false) {
+        self.id = id
+        self.ollamaModel = ollamaModel
+        self.prompt = prompt
+        self.outputLevel = outputLevel
+        self.normalizesMathDelimiters = normalizesMathDelimiters
+    }
 
     /// The instrument's shared instruction prompt (measureOCR Prompt.ocr),
     /// duplicated verbatim so the product never imports the frozen instrument.
@@ -25,10 +38,11 @@ public struct ModelProfile: Sendable {
 
     /// candidates.json caveat (2026-07-20): REQUIRES the native task prompt —
     /// generic instruction prompts yield degenerate loops. Math arrives as
-    /// \( \) not $ (delimiter normalization is deferred to M2 output work).
+    /// \( \) not $ → the Y3 delimiter-normalization flag rewrites it.
     public static let paddleOCRVL = ModelProfile(
         id: "paddleocr-vl", ollamaModel: "paddleocr-vl-anova:q8_0",
-        prompt: "OCR:", outputLevel: .mathMarkdown)
+        prompt: "OCR:", outputLevel: .mathMarkdown,
+        normalizesMathDelimiters: true)
 
     public static let all: [ModelProfile] = [glmOCR, ovisOCR2, paddleOCRVL]
 }
