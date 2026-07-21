@@ -1,15 +1,16 @@
 import Testing
 @testable import BestOCRKit
 
-/// Minimal stub for registry-behaviour tests (also reused in Task 9).
+/// Minimal stub for registry/recommender tests.
 struct StubEngine: OCREngine {
     let id: String
     let family = EngineFamily.classical
     let availability: EngineAvailability
     let text: String
+    var outputLevel: OutputLevel = .plainText
 
     var capabilities: EngineCapabilities {
-        EngineCapabilities(outputLevel: .plainText, languages: ["en"],
+        EngineCapabilities(outputLevel: outputLevel, languages: ["en"],
                            needsNetwork: false, memoryClass: .light)
     }
 
