@@ -1,4 +1,10 @@
+import ArgumentParser
+
 @main
-struct BestOCRPlaceholder {
-    static func main() { print("bestocr M1 — CLI lands in Task 9") }
+struct BestOCR: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "bestocr",
+        abstract: "Evidence-based multi-engine OCR (M1: explicit engine selection; auto-routing arrives with recommend in M2).",
+        subcommands: [Run.self, ListEngines.self]
+    )
 }
