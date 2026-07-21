@@ -32,7 +32,7 @@ RANKED (T2) 並引用該 row。計畫:
 
 ## 驗證
 
-- `swift test`:85 tests / 21 suites 全過(M4 新增 18)。
+- `swift test`:82 tests / 19 suites 全過(M4 新增 15)。
 - 全迴圈 E2E:`run → evidence ingest → recommend` 實測回 RANKED (T2),
   引用真實 runlog id;8 個無 row 引擎誠實標 unverified;cloud 不在列。
 - `list-engines`:11 列;cloud 三列 `✗ <KEY> not set` + export hint。
