@@ -5,7 +5,7 @@ import Foundation
 public enum BestOCRVersion {
     public static let string = "bestocr 0.1.0-dev"
     /// Plain semver for surfaces that require it (MCP server info, plugin.json).
-    public static let semver = "0.3.0"
+    public static let semver = "0.4.0"
 }
 
 /// Spec §5.1 — engine families. Cloud stays reference-only (spec §6.1.3).

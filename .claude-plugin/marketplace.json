@@ -5,14 +5,14 @@
     "url": "https://github.com/PsychQuant"
   },
   "metadata": {
-    "description": "Evidence-based multi-engine OCR for Apple Silicon — MCP server with tier-disciplined recommendations",
-    "version": "0.3.0"
+    "description": "Evidence-based multi-engine OCR for Apple Silicon — MCP server with measured auto-routing + workflow skills",
+    "version": "0.4.0"
   },
   "plugins": [
     {
       "name": "bestocr",
       "source": "./plugins/bestocr",
-      "description": "bestOCR for agents: the bestocr-mcp MCP server (multi-engine OCR over stdio — ocr/recommend/list_engines/list_models plus async job polling, notarized binary auto-downloaded on install). Engines: Apple Vision, tesseract, rapidocr/cnocr/surya adapters, Ollama VLMs (GLM-OCR, OvisOCR2, PaddleOCR-VL). recommend answers are evidence-labelled — tier-named rankings or an honest evidence-pending capability filter."
+      "description": "bestOCR for agents: bundles the bestocr-mcp MCP server (evidence-based multi-engine OCR over stdio — ocr with auto routing + fallback chain, recommend/list_engines/list_models plus async job polling, notarized binary auto-downloaded on install) and workflow skills — ocr (any PDF/image → Markdown, auto-routed), compare (local vs cloud reference with a named metric), evidence-ingest (the explicit runlog → T2 quality gate). Engines: Apple Vision, tesseract, rapidocr/cnocr/surya adapters, Ollama VLMs (GLM-OCR, OvisOCR2, PaddleOCR-VL), cloud reference (Claude/OpenAI/Gemini — never ranked)."
     }
   ]
 }
