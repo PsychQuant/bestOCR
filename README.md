@@ -5,15 +5,15 @@ sibling of bestASR. The product answers "which model / quant / DPI / platform
 should I run for *this* document workload?" with numbers that trace back to a
 pre-registered benchmark, never to vibes.
 
-**Status: M1 — engine layer + CLI.** `bestocr run` executes any locally
-available engine (Apple Vision, tesseract, Ollama VLMs) with explicit
-selection; every run records the full evidence condition tuple to
-`~/.bestocr/runlog.jsonl`. `recommend`, auto-routing, MCP, and external
-Python adapters land in M2–M4 (see
-`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`). The
-recommendation layer still ships only after the pre-registered sweep produces
-real evidence — `recommend` before that returns an honest *evidence-pending*
-answer, not a guess.
+**Status: M2 — multi-engine + recommend.** `bestocr run` executes any locally
+available engine (Apple Vision, tesseract, rapidocr/cnocr/surya via
+protocol-v1 Python adapters, Ollama VLMs); `bestocr recommend` returns an
+evidence-labelled answer — a tier-named ranking when measured rows exist in
+`evidence/rows.jsonl`, otherwise an honest *evidence-pending* capability
+filter. Every run records the full evidence condition tuple to
+`~/.bestocr/runlog.jsonl`. MCP + plugin land in M3; cloud reference +
+`evidence ingest` in M4 (see
+`docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`).
 
 ## Architecture — where OCR capability actually lives
 
@@ -56,12 +56,15 @@ swift build -c release
 .build/release/bestocr run page.png --engine vision --doc-type screenshot
 .build/release/bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/
+.build/release/bestocr recommend --doc-type math_pdf --math --priority quality
 ```
 
-Engine ids: `vision`, `tesseract`, `vlm.glm-ocr`, `vlm.ovisocr2`,
-`vlm.paddleocr-vl` (VLM engines need a running `ollama serve` with the model
-present; defaults are the SHA256-pinned `-anova:q8_0` builds, `--model`
-overrides the tag, e.g. `--model glm-ocr-anova:q4_K_M`).
+Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
+`vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl` (VLM engines need a running
+`ollama serve`; defaults are the SHA256-pinned `-anova:q8_0` builds, `--model`
+overrides). nougat is deferred: its local install is stranded in a pipx venv
+and upstream is archived — the adapter protocol makes re-admission a
+script-drop when wanted.
 
 ## Evidence discipline (the core design constraint)
 
