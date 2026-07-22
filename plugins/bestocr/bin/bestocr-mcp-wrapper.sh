@@ -146,6 +146,24 @@ if $NEED_DOWNLOAD; then
             ACTUAL_VERSION="$CANDIDATE_VERSION"
             echo "${ACTUAL_VERSION:-unknown}" > "$VERSION_FILE"
             echo "$BINARY_NAME: installed v${ACTUAL_VERSION:-unknown}" >&2
+
+            # Evidence rows for installed users (#9): best-effort refresh of the
+            # per-user fallback path read by EvidenceStore.defaultURL() when no
+            # source checkout is present. Tied to the binary-download event (v1;
+            # refresh cadence is a documented residue). First-char sanity check
+            # keeps an HTML error page from landing as "evidence" — the store
+            # loads malformed rows loudly, which would break recommend.
+            EV_TMP=$(mktemp "${INSTALL_DIR}/evidence.XXXXXX")
+            if curl -sL --max-time 30 \
+                 "https://raw.githubusercontent.com/$REPO/main/evidence/rows.jsonl" \
+                 -o "$EV_TMP" 2>/dev/null \
+               && [[ -s "$EV_TMP" && "$(head -c1 "$EV_TMP")" == "{" ]]; then
+                mkdir -p "$HOME/.bestocr"
+                mv "$EV_TMP" "$HOME/.bestocr/evidence.jsonl"
+                echo "$BINARY_NAME: refreshed evidence rows → ~/.bestocr/evidence.jsonl" >&2
+            else
+                rm -f "$EV_TMP" 2>/dev/null
+            fi
         else
             rm -f "$DL_TMP" 2>/dev/null
             if [[ -x "$BINARY" ]]; then

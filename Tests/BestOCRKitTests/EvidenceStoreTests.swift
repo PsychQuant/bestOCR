@@ -47,3 +47,36 @@ struct EvidenceStoreTests {
         #expect(EvidenceStore.defaultURL().path == "/tmp/custom-rows.jsonl")
     }
 }
+
+struct EvidenceStoreResolutionTests {
+    // #9: 安裝版使用者的 CWD 不在 source checkout — resolution 鏈must是
+    // env override → CWD repo 檔(存在才用)→ ~/.bestocr/evidence.jsonl。
+    @Test func envOverrideWins() {
+        let url = EvidenceStore.resolvedURL(
+            environment: ["BESTOCR_EVIDENCE": "/tmp/custom.jsonl"],
+            cwd: URL(fileURLWithPath: "/nonexistent"),
+            home: URL(fileURLWithPath: "/nonexistent-home"))
+        #expect(url.path == "/tmp/custom.jsonl")
+    }
+
+    @Test func cwdRowsPreferredWhenPresent() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("evres-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: dir.appendingPathComponent("evidence"), withIntermediateDirectories: true)
+        let rows = dir.appendingPathComponent("evidence/rows.jsonl")
+        try "".write(to: rows, atomically: true, encoding: .utf8)
+        let url = EvidenceStore.resolvedURL(environment: [:], cwd: dir,
+                                            home: URL(fileURLWithPath: "/nonexistent-home"))
+        #expect(url.path == rows.path)
+    }
+
+    @Test func homeFallbackWhenCwdRowsAbsent() {
+        let home = URL(fileURLWithPath: "/Users/fake-home")
+        let url = EvidenceStore.resolvedURL(
+            environment: [:],
+            cwd: FileManager.default.temporaryDirectory.appendingPathComponent("empty-\(UUID().uuidString)"),
+            home: home)
+        #expect(url.path == "/Users/fake-home/.bestocr/evidence.jsonl")
+    }
+}

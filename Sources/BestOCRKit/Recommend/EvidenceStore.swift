@@ -29,13 +29,27 @@ public struct EvidenceStore: Sendable {
         self.rows = rows
     }
 
-    /// `BESTOCR_EVIDENCE` env override, else `evidence/rows.jsonl` under CWD
-    /// (the repo layout; other callers set the env).
+    /// `BESTOCR_EVIDENCE` env override → `evidence/rows.jsonl` under CWD when
+    /// it exists (the repo layout) → `~/.bestocr/evidence.jsonl` (#9: installed
+    /// marketplace users never run from a source checkout; the plugin wrapper
+    /// populates the per-user path so recommend has rows there too).
     public static func defaultURL() -> URL {
-        if let override = ProcessInfo.processInfo.environment["BESTOCR_EVIDENCE"] {
+        resolvedURL(environment: ProcessInfo.processInfo.environment,
+                    cwd: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+                    home: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// Injectable resolution core (tests exercise the chain without touching
+    /// process-global CWD/home state).
+    static func resolvedURL(environment: [String: String], cwd: URL, home: URL) -> URL {
+        if let override = environment["BESTOCR_EVIDENCE"] {
             return URL(fileURLWithPath: override)
         }
-        return URL(fileURLWithPath: "evidence/rows.jsonl")
+        let repoLocal = cwd.appendingPathComponent("evidence/rows.jsonl")
+        if FileManager.default.fileExists(atPath: repoLocal.path) {
+            return repoLocal
+        }
+        return home.appendingPathComponent(".bestocr/evidence.jsonl")
     }
 
     /// Absent file → empty store (the honest evidence-pending path).
