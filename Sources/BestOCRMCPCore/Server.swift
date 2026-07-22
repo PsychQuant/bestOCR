@@ -133,6 +133,54 @@ public actor BestOCRMCPServer {
                 annotations: .init(readOnlyHint: true, openWorldHint: false)
             ),
             Tool(
+                name: "consensus",
+                description: "Multi-engine consensus OCR: run several engines over the same "
+                    + "input, align items (line-primary, table cells split), adjudicate with "
+                    + "a Dawid-Skene-lite estimator. Writes <stem>.consensus.md (⚠ marks "
+                    + "low-consensus items) + <stem>.consensus.json (per-engine competence, "
+                    + "low-consensus review list). Long documents: pass async=true, then "
+                    + "poll ocr_status / ocr_result.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "input_path": .object([
+                            "type": .string("string"),
+                            "description": .string("Absolute path to the PDF or image"),
+                        ]),
+                        "engines": .object([
+                            "type": .string("string"),
+                            "description": .string("Comma-separated engine ids (default: every available local engine; needs ≥2)"),
+                        ]),
+                        "out_dir": .object([
+                            "type": .string("string"),
+                            "description": .string("Output directory (default: a temp dir; paths returned either way)"),
+                        ]),
+                        "dpi": .object([
+                            "type": .string("number"),
+                            "description": .string("Render DPI for PDF inputs (default 150)"),
+                        ]),
+                        "pages": .object([
+                            "type": .string("string"),
+                            "description": .string("Page spec for PDFs, e.g. \"1-3,7\" (default: all)"),
+                        ]),
+                        "lang": .object([
+                            "type": .string("string"),
+                            "description": .string("Comma-separated language preference, e.g. \"zh-Hant,en\""),
+                        ]),
+                        "doc_type": .object([
+                            "type": .string("string"),
+                            "description": .string("Workload label (e.g. math_pdf, scanned_doc, gov_doc)"),
+                        ]),
+                        "async": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Run as a background job (poll ocr_status / ocr_result)"),
+                        ]),
+                    ]),
+                    "required": .array([.string("input_path")]),
+                ]),
+                annotations: .init(readOnlyHint: false, openWorldHint: false)
+            ),
+            Tool(
                 name: "list_engines",
                 description: "Probe every registered engine (Vision, tesseract, Python-tool "
                     + "adapters, Ollama VLMs) and show availability + install hints.",
@@ -218,6 +266,8 @@ public actor BestOCRMCPServer {
         switch name {
         case "ocr":
             return try await handleOCR(args)
+        case "consensus":
+            return try await handleConsensus(args)
         case "recommend":
             return try handleRecommend(args)
         case "list_engines":
@@ -249,6 +299,76 @@ public actor BestOCRMCPServer {
     }
 
     // MARK: - Handlers
+
+    private func handleConsensus(_ args: [String: Value]) async throws -> String {
+        // Parse outside the gate (same discipline as handleOCR).
+        let inputPath = try requiredString("input_path", in: args)
+        let outDir = args["out_dir"]?.stringValue
+            ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent("bestocr-consensus-\(UUID().uuidString)").path
+        let dpi = args["dpi"]?.doubleValue ?? 150
+        let pageSpec = args["pages"]?.stringValue ?? ""
+        let docType = args["doc_type"]?.stringValue ?? "unspecified"
+        let languages = (args["lang"]?.stringValue ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let engineIDs = (args["engines"]?.stringValue ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        let gate = ocrGate
+        let registrySnapshot = registry
+        let runLogSnapshot = runLog
+        let work: @Sendable () async throws -> String = {
+            try await gate.run {
+                var ids = engineIDs
+                if ids.isEmpty {
+                    for (engine, availability) in await registrySnapshot.probeAll() {
+                        if case .available = availability, engine.family != .cloudReference {
+                            ids.append(engine.id)
+                        }
+                    }
+                }
+                let summary = try await ConsensusPipeline.execute(
+                    inputPath: inputPath, engineIDs: ids, dpi: dpi, pageSpec: pageSpec,
+                    languages: languages, docType: docType,
+                    outDir: URL(fileURLWithPath: outDir), registry: registrySnapshot,
+                    runLog: runLogSnapshot)
+                return Self.renderConsensusSummary(summary)
+            }
+        }
+        if args["async"]?.boolValue == true {
+            let id = await jobs.start {
+                do { return try await work() } catch let error as OCREngineError {
+                    throw JobError(error.errorDescription ?? error.message)
+                }
+            }
+            return "job started\njob_id: \(id)\npoll with ocr_status / ocr_result"
+        }
+        return try await work()
+    }
+
+    static func renderConsensusSummary(_ summary: ConsensusRunSummary) -> String {
+        var lines: [String] = []
+        lines.append("engines: \(summary.engines.joined(separator: ", "))")
+        for (id, reason) in summary.skipped.sorted(by: { $0.key < $1.key }) {
+            lines.append("skipped: \(id) — \(reason)")
+        }
+        let est = summary.estimate
+        lines.append("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus) — \(est.iterations) iterations")
+        for (id, c) in est.overallCompetence.sorted(by: { $0.value > $1.value }) {
+            lines.append(String(format: "competence: %@ %.3f", id, c))
+        }
+        lines.append("transcript: \(summary.outputMarkdown.path)")
+        lines.append("report: \(summary.outputReport.path)")
+        lines.append("run-id: \(summary.runID) (promote with the evidence ingest gate)")
+        if summary.overwrote {
+            lines.append("note: overwrote existing consensus artifacts for this stem/out-dir")
+        }
+        return lines.joined(separator: "\n")
+    }
 
     private func handleOCR(_ args: [String: Value]) async throws -> String {
         // Parse outside the gate: malformed calls fail fast and in parallel —

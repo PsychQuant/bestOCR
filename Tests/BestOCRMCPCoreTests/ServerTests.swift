@@ -58,7 +58,7 @@ struct ServerTests {
 
     @Test func toolListAndDispatchAgree() async throws {
         let names = Set(BestOCRMCPServer.defineTools().map(\.name))
-        #expect(names == ["ocr", "recommend", "list_engines", "list_models",
+        #expect(names == ["ocr", "consensus", "recommend", "list_engines", "list_models",
                           "ocr_status", "ocr_result"])
         let (server, _) = try makeServer()
         for name in names {
