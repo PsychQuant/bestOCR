@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Evidence-based multi-engine OCR for Apple Silicon — MCP server with measured auto-routing + workflow skills",
-    "version": "0.6.0"
+    "version": "0.6.1"
   },
   "plugins": [
     {
