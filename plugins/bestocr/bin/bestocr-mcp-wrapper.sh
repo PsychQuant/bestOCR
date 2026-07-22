@@ -95,8 +95,15 @@ if $NEED_DOWNLOAD; then
             # stapled; the ticket lives on Apple's servers).
             xattr -d com.apple.quarantine "${BINARY}.tmp" 2>/dev/null || true
             mv "${BINARY}.tmp" "$BINARY"
-            echo "${DESIRED_VERSION:-unknown}" > "$VERSION_FILE"
-            echo "$BINARY_NAME: installed v${DESIRED_VERSION:-latest}" >&2
+            # Record the version we ACTUALLY installed, parsed from the final
+            # download URL (both the direct and API-discovered forms contain
+            # /releases/download/v<tag>/). Recording DESIRED_VERSION here broke
+            # the up-to-date check whenever the fallback chain served an older
+            # release (#6): the sidecar claimed the desired tag, so a real
+            # future release under that tag would never be downloaded.
+            ACTUAL_VERSION=$(printf '%s' "$URL" | sed -n 's#.*/releases/download/v\([^/]*\)/.*#\1#p')
+            echo "${ACTUAL_VERSION:-unknown}" > "$VERSION_FILE"
+            echo "$BINARY_NAME: installed v${ACTUAL_VERSION:-unknown}" >&2
         else
             rm -f "${BINARY}.tmp" 2>/dev/null
             if [[ -x "$BINARY" ]]; then
