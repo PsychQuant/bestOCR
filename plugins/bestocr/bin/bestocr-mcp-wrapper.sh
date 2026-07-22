@@ -79,8 +79,23 @@ if $NEED_DOWNLOAD; then
         done
     fi
 
+    # Version-gap guard (#6 follow-through): when the plugin pins a version
+    # with no matching binary release (plugin-shell-only bumps), the resolution
+    # chain lands on an older release every spawn. If what it resolved is the
+    # version we already have, skip the download instead of re-fetching ~50MB
+    # per spawn. No negative caching (a transient 5xx must not block a future
+    # real release) and a missing binary still falls through to download.
+    CANDIDATE_VERSION=$(printf '%s' "$URL" | sed -n 's#.*/releases/download/v\([^/]*\)/.*#\1#p')
+    if [[ -x "$BINARY" && -n "$CANDIDATE_VERSION" && "$CANDIDATE_VERSION" == "$INSTALLED_VERSION" ]]; then
+        echo "$BINARY_NAME: plugin wants v${DESIRED_VERSION:-?} but resolvable release is v${CANDIDATE_VERSION} (already installed) — skipping download" >&2
+        URL=""
+        SKIP_REASON="up-to-date"
+    fi
+
     if [[ -z "$URL" ]]; then
-        if [[ -x "$BINARY" ]]; then
+        if [[ "${SKIP_REASON:-}" == "up-to-date" ]]; then
+            : # installed binary matches the resolvable release — nothing to do
+        elif [[ -x "$BINARY" ]]; then
             echo "$BINARY_NAME: WARNING — no download URL found, keeping existing binary" >&2
         else
             echo "$BINARY_NAME: ERROR — no download URL found at $REPO." >&2
@@ -88,24 +103,27 @@ if $NEED_DOWNLOAD; then
             exit 1
         fi
     else
-        if curl -sL --max-time 300 "$URL" -o "${BINARY}.tmp" 2>/dev/null; then
-            chmod +x "${BINARY}.tmp"
+        # mktemp: concurrent sessions each spawn the wrapper; a fixed .tmp
+        # path would let parallel downloads clobber each other mid-write.
+        DL_TMP=$(mktemp "${BINARY}.XXXXXX")
+        if curl -sL --max-time 300 "$URL" -o "$DL_TMP" 2>/dev/null; then
+            chmod +x "$DL_TMP"
             # Strip the download quarantine so Gatekeeper's online notarization
             # check runs clean on the notarized binary (bare executables can't be
             # stapled; the ticket lives on Apple's servers).
-            xattr -d com.apple.quarantine "${BINARY}.tmp" 2>/dev/null || true
-            mv "${BINARY}.tmp" "$BINARY"
-            # Record the version we ACTUALLY installed, parsed from the final
-            # download URL (both the direct and API-discovered forms contain
+            xattr -d com.apple.quarantine "$DL_TMP" 2>/dev/null || true
+            mv "$DL_TMP" "$BINARY"
+            # Record the version we ACTUALLY installed, parsed from the chosen
+            # release URL (both the direct and API-discovered forms contain
             # /releases/download/v<tag>/). Recording DESIRED_VERSION here broke
             # the up-to-date check whenever the fallback chain served an older
             # release (#6): the sidecar claimed the desired tag, so a real
             # future release under that tag would never be downloaded.
-            ACTUAL_VERSION=$(printf '%s' "$URL" | sed -n 's#.*/releases/download/v\([^/]*\)/.*#\1#p')
+            ACTUAL_VERSION="$CANDIDATE_VERSION"
             echo "${ACTUAL_VERSION:-unknown}" > "$VERSION_FILE"
             echo "$BINARY_NAME: installed v${ACTUAL_VERSION:-unknown}" >&2
         else
-            rm -f "${BINARY}.tmp" 2>/dev/null
+            rm -f "$DL_TMP" 2>/dev/null
             if [[ -x "$BINARY" ]]; then
                 echo "$BINARY_NAME: WARNING — download failed, keeping existing binary" >&2
             else
