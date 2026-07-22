@@ -12,7 +12,7 @@ public enum ItemKind: String, Sendable, Codable, CaseIterable {
 /// Stable identity of one recognition unit within a document.
 public struct ItemKey: Hashable, Sendable, Codable {
     public let page: Int
-    public let index: Int      // position in the aligned spine, monotone per page
+    public let index: Int      // reading-order position on the page (spine + interleaved solos)
     public let kind: ItemKind
 
     public init(page: Int, index: Int, kind: ItemKind) {

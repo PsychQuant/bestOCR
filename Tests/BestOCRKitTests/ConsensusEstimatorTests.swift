@@ -131,6 +131,21 @@ struct ConsensusEstimatorTests {
         }
     }
 
+    @Test func emptyPlaceholdersDoNotVote() {
+        // #13 verify (Codex): positional placeholders ("" cells) must keep
+        // their slot but NOT vote — two empty cells would otherwise outvote
+        // the only engine that read real content 2:1, and empty↔empty would
+        // inflate supporters/competence/agreement.
+        let mixed = item(0, ["A": "", "B": "", "C": "5"])
+        let allEmpty = item(1, ["A": "", "B": ""])
+        let est = ConsensusEstimator.estimate(items: [mixed, allEmpty])
+        #expect(est.items.count == 1, "all-empty item carries no signal and is dropped")
+        #expect(est.items.first?.consensusText == "5",
+                "the only real content wins; empties abstain")
+        #expect(est.items.first?.lowConsensus == true,
+                "one real supporter is uncorroborated")
+    }
+
     @Test func responsesPreserveRawRendering() {
         // #13 F5: whitespace differences are real OCR signal for the OUTPUT
         // even though voting ignores them — the published responses and the

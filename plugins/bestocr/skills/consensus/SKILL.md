@@ -33,7 +33,12 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
 - estimator 是 EM 式加權多數決（"-lite"）：無混淆矩陣，**無法做方向性混淆辨別**
   （分不出「申→甲」與「甲→申」哪個方向更常錯）。
 - 資源上限：每頁最多 2000 個 item、單行最長 4000 字元，超限截斷（防退化輸出
-  造成 CPU/OOM）；只跑本機引擎，顯式指定 cloud engine 會被拒絕。
+  造成 CPU/OOM）；只跑本機引擎，顯式指定 cloud／需網路引擎會被拒絕。
+- 表格支援限 pipe 語法（`| a | b |`）：escaped pipe（`\|`）與無首尾 `|` 的表格
+  不支援；math 偵測限 `$`/`$$`/`\(`/`\[`/常見數學 environment——bare LaTeX 指令
+  與 Unicode 方程不會被分類為 math（仍以一般行參與共識）。
+- 報告 JSON `schema_version: 2` 起 `responses`／consensus 文字為各引擎**原始
+  rendering**（v1 為 normalized 文字）；空 table cell 是位置佔位，不參與投票。
 - 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點；competence 仍是對
   已發布 verdict 的一致率（內部一致），而在發布 competence 下不再是贏家的
   verdict 會被強制標為低共識送人工複核。

@@ -29,9 +29,11 @@ public enum ConsensusEstimator {
     private static let tieEpsilon = 1e-9
 
     public static func estimate(items allItems: [AlignedItem], maxIterations: Int = 20) -> ConsensusEstimate {
-        // Empty-response items carry no signal and would trap weightedWinner
-        // (public-API hardening — the pipeline never builds them).
-        let items = allItems.filter { !$0.responses.isEmpty }
+        // Items with no responses — or only positional placeholders (empty
+        // canonical, e.g. empty table cells) — carry no votable signal and
+        // would trap or distort weightedWinner. Placeholders keep their
+        // alignment slot but never vote (#13 verify).
+        let items = allItems.filter { $0.responses.values.contains { !$0.canonical.isEmpty } }
         guard !items.isEmpty else {
             return ConsensusEstimate(items: [], overallCompetence: [:], competence: [:],
                                      agreement: [:], iterations: 0, converged: true)
@@ -114,7 +116,8 @@ public enum ConsensusEstimator {
         for engine in engines {
             var n = 0, correct = 0
             for (idx, item) in items.enumerated() {
-                guard !uninformative.contains(idx), let r = item.responses[engine] else { continue }
+                guard !uninformative.contains(idx), let r = item.responses[engine],
+                      !r.canonical.isEmpty else { continue }
                 n += 1
                 if r.canonical == assignment[idx] { correct += 1 }
             }
@@ -140,7 +143,7 @@ public enum ConsensusEstimator {
     private static func weightedWinner(item: AlignedItem,
                                        perKind: [String: [ItemKind: Double]]) -> Winner {
         var tally: [String: Double] = [:]
-        for (engine, response) in item.responses {
+        for (engine, response) in item.responses where !response.canonical.isEmpty {
             let w = perKind[engine]?[item.key.kind] ?? defaultCompetence
             tally[response.canonical, default: 0] += w
         }
@@ -160,7 +163,7 @@ public enum ConsensusEstimator {
     private static func terminalShare(item: AlignedItem, label: String,
                                       perKind: [String: [ItemKind: Double]]) -> Double {
         var winning = 0.0, total = 0.0
-        for (engine, response) in item.responses {
+        for (engine, response) in item.responses where !response.canonical.isEmpty {
             let w = perKind[engine]?[item.key.kind] ?? defaultCompetence
             total += w
             if response.canonical == label { winning += w }
@@ -177,7 +180,7 @@ public enum ConsensusEstimator {
         var counts: [String: [ItemKind: (n: Int, correct: Int)]] = [:]
         for (idx, item) in items.enumerated() {
             guard !tied.contains(idx) else { continue }
-            for (engine, response) in item.responses {
+            for (engine, response) in item.responses where !response.canonical.isEmpty {
                 var kindCounts = counts[engine] ?? [:]
                 var c = kindCounts[item.key.kind] ?? (0, 0)
                 c.n += 1
@@ -208,7 +211,8 @@ public enum ConsensusEstimator {
             for b in engines where a != b {
                 var n = 0, agree = 0
                 for item in items {
-                    guard let ra = item.responses[a], let rb = item.responses[b] else { continue }
+                    guard let ra = item.responses[a], let rb = item.responses[b],
+                          !ra.canonical.isEmpty, !rb.canonical.isEmpty else { continue }
                     n += 1
                     if ra.canonical == rb.canonical { agree += 1 }
                 }

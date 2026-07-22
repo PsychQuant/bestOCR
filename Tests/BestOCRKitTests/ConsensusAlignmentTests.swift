@@ -144,6 +144,56 @@ struct ConsensusAlignmentTests {
         #expect(mergedKind(mathEngine: "C", proseEngine: "B") == .math)
     }
 
+    @Test func tableRowRespectsTheItemCap() {
+        // #13 verify (Codex): the cap was checked per LINE — one wide table
+        // row could blow past it. It must hold per ITEM.
+        let prose = Array(repeating: "line", count: 1_999)
+        let wideRow = "|" + Array(repeating: "c", count: 100).joined(separator: "|") + "|"
+        let text = (prose + [wideRow]).joined(separator: "\n")
+        #expect(ItemExtractor.extract(page: 1, text: text).count == 2_000)
+    }
+
+    @Test func mathEnvironmentsAreRestrictedToMathOnes() {
+        // #13 verify (Codex): \begin{itemize}/\begin{document} are NOT math —
+        // over-broad classification pollutes competence_by_kind.
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{itemize}"#).first?.kind == .proseLine)
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{align}"#).first?.kind == .math)
+    }
+
+    @Test func soloMergeNeedsTheSameGapInterval() {
+        // #13 verify (Codex): prev-anchor alone cannot prove the same gap —
+        // engines missing DIFFERENT middle spine items got merged. The
+        // interval (prev, next) must match.
+        let spine = "s0\ns1\ns2\ns3"
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: spine),
+            "D": ItemExtractor.extract(page: 1, text: spine),
+            "E": ItemExtractor.extract(page: 1, text: spine),
+            // B: matches s0 only → its solo lives in interval (0, end).
+            // (Unequal gap sizes keep equal-gap pairing out of the picture.)
+            "B": ItemExtractor.extract(page: 1, text: "s0\nxx yy zz"),
+            // C: matches s0, s1, s2 → its solo lives in interval (0, 1)
+            "C": ItemExtractor.extract(page: 1, text: "s0\nxx yy zz\ns1\ns2"),
+        ])
+        let solos = aligned.filter { $0.responses.keys.contains("B") || $0.responses.keys.contains("C") }
+            .filter { !$0.responses.keys.contains("A") }
+        #expect(solos.count == 2, "different intervals must not merge (got \(solos.count))")
+    }
+
+    @Test func noMatchEngineGoesToTheTailNotTheTop() {
+        // #13 verify (Codex): an engine with zero matches has NO positional
+        // evidence — dumping its items before the spine is worse than the
+        // old tail placement.
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: "l1\nl2"),
+            "B": ItemExtractor.extract(page: 1, text: "l1\nl2"),
+            "Z": ItemExtractor.extract(page: 1, text: "zzz1\nzzz2\nzzz3"),
+        ])
+        #expect(aligned.first?.responses.keys.contains("A") == true,
+                "the spine opens the page; no-position items close it")
+        #expect(aligned.last?.responses.keys.contains("Z") == true)
+    }
+
     @Test func soloItemsInterleaveAtTheirGapPosition() {
         // #13 F6: an item the spine missed must come back at its gap
         // position, not get appended to the page tail — reading order is

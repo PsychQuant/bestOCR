@@ -39,6 +39,9 @@ public enum ItemExtractor {
                 // them shifts every later column and misaligns cells across
                 // engines. An empty cell is a positional fact.
                 for cell in cells {
+                    // The cap is per ITEM, not per line — one wide table row
+                    // must not blow past it (#13 verify).
+                    if items.count >= ConsensusAlignment.maxItemsPerPage { break }
                     items.append(ExtractedItem(kind: .tableCell, text: cell,
                                                normalized: normalize(cell)))
                 }
@@ -86,9 +89,19 @@ public enum ItemExtractor {
         }
     }
 
+    /// LaTeX environments that are actually math — a bare `\begin{` prefix
+    /// would classify itemize/document/table as math and pollute the
+    /// per-kind competence attribution (#13 verify).
+    private static let mathEnvironments = [
+        "equation", "align", "gather", "multline", "eqnarray",
+        "math", "displaymath", "cases", "split", "array",
+    ]
+
     private static func isMathLine(_ line: String) -> Bool {
-        if line.hasPrefix("$$") || line.hasPrefix("\\[")
-            || line.hasPrefix("\\(") || line.hasPrefix("\\begin{") { return true }
+        if line.hasPrefix("$$") || line.hasPrefix("\\[") || line.hasPrefix("\\(") { return true }
+        if line.hasPrefix("\\begin{") {
+            return mathEnvironments.contains { line.hasPrefix("\\begin{\($0)") }
+        }
         return line.filter { $0 == "$" }.count >= 2
     }
 
@@ -146,10 +159,12 @@ public enum ConsensusAlignment {
         for (i, item) in spine.enumerated() {
             responses[i] = [spineEngine: ItemResponse(raw: item.text, normalized: item.normalized)]
         }
-        // Unmatched items carry their gap anchor — the last matched spine
-        // index before them (−1 = before the first anchor). Position within
-        // the page is part of the transcript contract (#13 F6).
-        var solo: [(engine: String, item: ExtractedItem, anchor: Int)] = []
+        // Unmatched items carry their gap INTERVAL (prev, next) — the spine
+        // indices of the matched items around them (−1 / spine.count at the
+        // boundaries). prev alone cannot prove the same gap: engines missing
+        // DIFFERENT middle spine items share a prev yet sit in different
+        // gaps (#13 verify). Position is part of the transcript contract.
+        var solo: [(engine: String, item: ExtractedItem, oi: Int, prev: Int, next: Int)] = []
 
         for engine in engines where engine != spineEngine {
             let others = extractions[engine]!
@@ -164,8 +179,9 @@ public enum ConsensusAlignment {
             }
             let sortedPairs = matched.sorted { $0.1 < $1.1 }
             for (oi, item) in others.enumerated() where !used.contains(oi) {
-                let anchor = sortedPairs.last(where: { $0.1 < oi })?.0 ?? -1
-                solo.append((engine, item, anchor))
+                let prev = sortedPairs.last(where: { $0.1 < oi })?.0 ?? -1
+                let next = sortedPairs.first(where: { $0.1 > oi })?.0 ?? spine.count
+                solo.append((engine, item, oi, prev, next))
             }
         }
 
@@ -176,11 +192,11 @@ public enum ConsensusAlignment {
         // contributes at most once per group. Group kind is content-based:
         // .math wins if ANY member saw math syntax — independent of engine
         // naming/order (a rendering artifact must not decide attribution).
-        var groups: [(kind: ItemKind, exemplar: ExtractedItem, anchor: Int,
-                      responses: [String: ItemResponse])] = []
-        for (engine, item, anchor) in solo.sorted(by: { $0.engine < $1.engine }) {
+        var groups: [(kind: ItemKind, exemplar: ExtractedItem, prev: Int, next: Int,
+                      minOi: Int, responses: [String: ItemResponse])] = []
+        for (engine, item, oi, prev, next) in solo.sorted(by: { ($0.engine, $0.oi) < ($1.engine, $1.oi) }) {
             var placed = false
-            for g in groups.indices where groups[g].anchor == anchor
+            for g in groups.indices where groups[g].prev == prev && groups[g].next == next
                 && kindCompatible(groups[g].kind, item.kind)
                 && groups[g].responses[engine] == nil {
                 let te = matchText(groups[g].exemplar), ti = matchText(item)
@@ -188,23 +204,33 @@ public enum ConsensusAlignment {
                     groups[g].responses[engine] = ItemResponse(raw: item.text,
                                                                normalized: item.normalized)
                     if item.kind == .math { groups[g].kind = .math }
+                    groups[g].minOi = min(groups[g].minOi, oi)
                     placed = true
                     break
                 }
             }
             if !placed {
-                groups.append((item.kind, item, anchor,
+                groups.append((item.kind, item, prev, next, oi,
                                [engine: ItemResponse(raw: item.text, normalized: item.normalized)]))
             }
         }
 
         // Emission interleaves solo groups back at their gap positions:
-        // anchor −1 groups precede the spine, anchor i groups follow
-        // spine[i]. Indices follow reading order.
+        // prefix-gap groups (prev −1 with a real next anchor) precede the
+        // spine, groups anchored after spine[i] follow it, and whole-page
+        // groups (no anchor on EITHER side — typically a zero-match engine)
+        // go to the tail: they carry no positional evidence, and the top
+        // would be an arbitrary — and worse — guess. Within a gap, groups
+        // follow their earliest original position (then exemplar text) for a
+        // deterministic reading order.
         var out: [AlignedItem] = []
         var index = 0
-        func emitGroups(anchoredAt anchor: Int) {
-            for group in groups where group.anchor == anchor {
+        func emitGroups(anchoredAt prev: Int, wholePage: Bool = false) {
+            let picked = groups
+                .filter { $0.prev == prev
+                    && (($0.prev == -1 && $0.next == spine.count) == wholePage) }
+                .sorted { ($0.minOi, $0.exemplar.normalized) < ($1.minOi, $1.exemplar.normalized) }
+            for group in picked {
                 out.append(AlignedItem(key: ItemKey(page: page, index: index, kind: group.kind),
                                        responses: group.responses))
                 index += 1
@@ -217,6 +243,7 @@ public enum ConsensusAlignment {
             index += 1
             emitGroups(anchoredAt: i)
         }
+        emitGroups(anchoredAt: -1, wholePage: true)
         return out
     }
 

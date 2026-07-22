@@ -66,5 +66,8 @@ struct Consensus: AsyncParsableCommand {
         print("transcript: \(summary.outputMarkdown.path)")
         print("report: \(summary.outputReport.path)")
         print("run-id: \(summary.runID) (promote with: bestocr evidence ingest \(summary.runID.prefix(8)))")
+        if summary.overwrote {
+            print("note: overwrote existing consensus artifacts for this stem/out-dir")
+        }
     }
 }

@@ -9,6 +9,9 @@ public struct ConsensusRunSummary: Sendable {
     public let estimate: ConsensusEstimate
     /// Runlog entry id (#12) — the handle `bestocr evidence ingest` takes.
     public let runID: String
+    /// True when this run replaced existing consensus artifacts for the same
+    /// stem/outDir (#13 F15c) — surfaced, never silent.
+    public let overwrote: Bool
 }
 
 /// Multi-engine consensus flow (#11): run N engines over the same normalized
@@ -82,6 +85,10 @@ public enum ConsensusPipeline {
                                pageSpec: String, languages: [String], docType: String,
                                outDir: URL, registry: EngineRegistry,
                                runLog: RunLog) async throws -> ConsensusRunSummary {
+        guard dpi.isFinite, dpi > 0 else {
+            throw OCREngineError(engine: "consensus",
+                                 message: "dpi must be a finite positive number (got \(dpi))")
+        }
         var skipped: [String: String] = [:]
         var candidates: [any OCREngine] = []
         var seen = Set<String>()
@@ -89,18 +96,26 @@ public enum ConsensusPipeline {
             // A duplicate id is the same informant — dedupe (order-preserving)
             // so the ≥2 floor counts informants, not list entries.
             guard seen.insert(id).inserted else { continue }
+            // "consensus" is the reserved runlog marker EvidenceIngest
+            // branches on — enforced here, not just asserted against
+            // today's standard registry.
+            if id == "consensus" {
+                throw OCREngineError(engine: "consensus",
+                                     message: "'consensus' is the reserved runlog marker id"
+                                         + " — no engine may claim it")
+            }
             guard let engine = registry.engine(id: id) else {
                 skipped[id] = "unknown engine id"
                 continue
             }
             // Privacy contract: consensus is local-only (SKILL: 文件不離機;
-            // MCP openWorldHint: false). An explicit cloud id is refused
-            // loudly, never silently honored.
-            if engine.family == .cloudReference {
+            // MCP openWorldHint: false). Cloud AND network-reaching engines
+            // are refused loudly, never silently honored.
+            if engine.family == .cloudReference || engine.capabilities.needsNetwork {
                 throw OCREngineError(engine: "consensus",
-                                     message: "cloud engine '\(id)' is not allowed in consensus"
-                                         + " (local-only privacy contract) — use `bestocr compare`"
-                                         + " for cloud-reference runs")
+                                     message: "cloud/network engine '\(id)' is not allowed in"
+                                         + " consensus (local-only privacy contract) — use"
+                                         + " `bestocr compare` for cloud-reference runs")
             }
             if case .unavailable(let reason, _) = await engine.probe() {
                 skipped[id] = "unavailable: \(reason)"
@@ -143,15 +158,21 @@ public enum ConsensusPipeline {
 
         let estimate = adjudicate(results: results)
         // Two OCRResults are not two effective informants: without a single
-        // co-answered item (disjoint pages, empty outputs, nothing alignable)
+        // item co-answered with REAL content (empty placeholders abstain)
         // there is no consensus to report.
-        guard estimate.items.contains(where: { $0.responses.count >= 2 }) else {
+        guard estimate.items.contains(where: { item in
+            item.responses.values.filter { !$0.isEmpty }.count >= 2
+        }) else {
             throw OCREngineError(engine: "consensus",
                                  message: "no co-answered items across "
                                      + results.keys.sorted().joined(separator: ", ")
                                      + " — engines produced disjoint or empty extractions;"
                                      + " nothing to adjudicate")
         }
+        // Overwrite is surfaced, never silent (#13 F15c).
+        let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+        let overwrote = FileManager.default
+            .fileExists(atPath: outDir.appendingPathComponent("\(stem).consensus.md").path)
         let outputs = try writeOutputs(estimate: estimate,
                                        engines: results.keys.sorted(),
                                        skipped: skipped,
@@ -174,7 +195,8 @@ public enum ConsensusPipeline {
                                    engines: results.keys.sorted(),
                                    skipped: skipped,
                                    estimate: estimate,
-                                   runID: entry.id)
+                                   runID: entry.id,
+                                   overwrote: overwrote)
     }
 }
 
@@ -190,6 +212,11 @@ struct ConsensusReport: Codable {
         let responses: [String: String]
     }
 
+    /// Report schema version: 2 = responses/consensus text are RAW engine
+    /// renderings (v1 published normalized text). Legacy files decode as 1.
+    static let currentSchemaVersion = 2
+
+    let schemaVersion: Int
     let engines: [String]
     let skipped: [String: String]
     let itemCount: Int
@@ -209,6 +236,7 @@ struct ConsensusReport: Codable {
 
     enum CodingKeys: String, CodingKey {
         case engines, skipped, iterations, converged, agreement
+        case schemaVersion = "schema_version"
         case itemCount = "item_count"
         case coAnswerShare = "co_answer_share"
         case enginesWithoutAlignedItems = "engines_without_aligned_items"
@@ -221,6 +249,7 @@ struct ConsensusReport: Codable {
     /// of failing on old report files (`converged` → false, coverage → 0/[]).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         self.engines = try c.decode([String].self, forKey: .engines)
         self.skipped = try c.decode([String: String].self, forKey: .skipped)
         self.itemCount = try c.decode(Int.self, forKey: .itemCount)
@@ -236,16 +265,18 @@ struct ConsensusReport: Codable {
     }
 
     init(estimate: ConsensusEstimate, engines: [String], skipped: [String: String]) {
+        self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
         self.skipped = skipped
         self.itemCount = estimate.items.count
         self.iterations = estimate.iterations
         self.converged = estimate.converged
         self.coAnswerShare = estimate.items.isEmpty ? 0
-            : Double(estimate.items.filter { $0.responses.count >= 2 }.count)
-                / Double(estimate.items.count)
+            : Double(estimate.items.filter { item in
+                item.responses.values.filter { !$0.isEmpty }.count >= 2
+              }.count) / Double(estimate.items.count)
         self.enginesWithoutAlignedItems = engines.filter { engine in
-            !estimate.items.contains { $0.responses.keys.contains(engine) }
+            !estimate.items.contains { ($0.responses[engine]?.isEmpty == false) }
         }.sorted()
         self.overallCompetence = estimate.overallCompetence
         self.competenceByKind = estimate.competence.mapValues { kinds in

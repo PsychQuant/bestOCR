@@ -245,12 +245,84 @@ struct ConsensusPipelineTests {
             "A": result("A", "one\ntwo"),
             "C": loopResult,
         ])
-        // Emission places anchor-(−1) solos before the spine, so the spine's
-        // LAST item is the order-robust observable: with the flag wired, the
-        // clean engine's "two" closes the page; with C as spine it would be
-        // C's loop line.
-        #expect(est.items.last?.responses.keys.contains("A") == true,
+        // With the flag wired, A is the spine and C's zero-match loop items
+        // are whole-page groups at the TAIL — so the page opens with A's
+        // "one". Without the veto, C's loop would be the spine and open it.
+        #expect(est.items.first?.responses.keys.contains("A") == true,
                 "clean engine defines the spine when the other is degenerate-flagged")
+    }
+
+    @Test func reservedIdAndNetworkEnginesAreRefusedInExecute() async throws {
+        // #13 verify: the reserved marker must be enforced in the pipeline,
+        // not just asserted against today's standard registry; and the
+        // local-only contract gates on needsNetwork too, not only family.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "x"),
+            StubEngine(id: "consensus", availability: .available, text: "x"),
+        ])
+        do {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["consensus", "A"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry, runLog: runLog)
+            Issue.record("reserved id must be refused")
+        } catch let error as OCREngineError {
+            #expect(error.message.contains("reserved"))
+        }
+    }
+
+    @Test func invalidDpiIsRefused() async throws {
+        // #13 F15(d): dpi must be finite and positive before any work runs.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "x"),
+            StubEngine(id: "B", availability: .available, text: "x"),
+        ])
+        for bad in [-5.0, 0, Double.nan, .infinity] {
+            await #expect(throws: OCREngineError.self, "dpi \(bad) must be refused") {
+                _ = try await ConsensusPipeline.execute(
+                    inputPath: img.path, engineIDs: ["A", "B"], dpi: bad,
+                    pageSpec: "", languages: [], docType: "test",
+                    outDir: tmp.appendingPathComponent("out"), registry: registry, runLog: runLog)
+            }
+        }
+    }
+
+    @Test func overwritingExistingArtifactsIsSurfaced() async throws {
+        // #13 F15(c): a second run over the same stem/outDir silently
+        // replaced the artifacts — the summary must say so.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello"),
+            StubEngine(id: "B", availability: .available, text: "hello"),
+        ])
+        let out = tmp.appendingPathComponent("out")
+        let first = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150, pageSpec: "",
+            languages: [], docType: "test", outDir: out, registry: registry, runLog: runLog)
+        #expect(first.overwrote == false)
+        let second = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150, pageSpec: "",
+            languages: [], docType: "test", outDir: out, registry: registry, runLog: runLog)
+        #expect(second.overwrote == true)
+    }
+
+    @Test func reportCarriesSchemaVersionAndDecodesLegacy() throws {
+        // #13 verify (Codex): responses switched normalized→raw with no
+        // schema marker. v2 declares itself; legacy decodes as v1.
+        let estimate = ConsensusPipeline.adjudicate(results: [
+            "A": result("A", "hello"), "B": result("B", "hello"),
+        ])
+        let report = ConsensusReport(estimate: estimate, engines: ["A", "B"], skipped: [:])
+        #expect(report.schemaVersion == 2)
+        let legacy = """
+        {"agreement":{},"engines":["A"],"item_count":0,"iterations":1,
+         "low_consensus":[],"overall_competence":{},"competence_by_kind":{},
+         "skipped":{}}
+        """
+        let decoded = try JSONDecoder().decode(ConsensusReport.self, from: Data(legacy.utf8))
+        #expect(decoded.schemaVersion == 1 && decoded.converged == false)
     }
 
     @Test func registryHasNoEngineNamedConsensus() {

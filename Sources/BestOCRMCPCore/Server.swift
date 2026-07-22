@@ -364,6 +364,9 @@ public actor BestOCRMCPServer {
         lines.append("transcript: \(summary.outputMarkdown.path)")
         lines.append("report: \(summary.outputReport.path)")
         lines.append("run-id: \(summary.runID) (promote with the evidence ingest gate)")
+        if summary.overwrote {
+            lines.append("note: overwrote existing consensus artifacts for this stem/out-dir")
+        }
         return lines.joined(separator: "\n")
     }
 
