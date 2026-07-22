@@ -68,6 +68,9 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
 - ✅ P3 quality-estimand ingest(compare → runlog quality stat → ingest 雙
   row;recommend word_recall 優先、token_recall fallback、絕不混排)+
   PaddleOCR-VL `\( \)` → `$` Y3 正規化(profile-gated,只轉成對)(2026-07-22)
+- ✅ P4 `/bestocr:ocr-to` skill(OCR → docx via macdoc CLI;純 skill 層,
+  plugin 0.6.0 shell-only bump——wrapper 對缺 tag 版本 fallback 到
+  releases/latest;math 純文字直通,OMath 升級見 #3)(2026-07-22,#1)
 - Backlog:text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 
 ## Cloud reference 備忘(M4)

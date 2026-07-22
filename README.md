@@ -23,7 +23,9 @@ polling; heavy OCR single-flighted). Spec:
 engine from the recommend ordering (measured rows first, capability filter
 otherwise) and falls back past unavailable/failing engines — every hop is
 printed, never silent. Pin an engine with `--engine <id>` (no fallback).
-Workflow skills ship with the plugin: `/bestocr:ocr`, `/bestocr:compare`,
+Workflow skills ship with the plugin: `/bestocr:ocr`, `/bestocr:ocr-to`
+(OCR → target file format, v1 docx via the macdoc CLI; math stays as
+literal LaTeX — OMath upgrade tracked in #3), `/bestocr:compare`,
 `/bestocr:evidence-ingest`. `compare` runs are logged with their
 `quality.token_recall_vs_cloud@v1` score attached, so `evidence ingest`
 promotes speed **and** quality rows; `recommend --priority quality` falls
