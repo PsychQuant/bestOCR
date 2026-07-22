@@ -4,6 +4,5 @@
 Package.resolved
 *.code-workspace
 
-# IDD tree-lock (idd-tree-lock.sh #183) — per-machine session state, not tracked
-.claude/.idd/tree-lock
+# IDD per-machine local state (config, downloaded attachments, tree-lock) — not tracked
 .claude/.idd/
