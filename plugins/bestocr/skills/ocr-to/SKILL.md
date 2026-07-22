@@ -1,6 +1,6 @@
 ---
 name: ocr-to
-description: 把 PDF/圖片 OCR 後轉成使用者指定的目標檔案格式(v1 支援 docx)——bestOCR auto-routing 出 Markdown,再經 macdoc CLI 轉檔。當使用者說「把這個 PDF 轉成 Word」「掃描檔轉 docx」「OCR 完給我 Word 檔」時使用。需要 macdoc CLI;數學公式在 v1 以 LaTeX 原文呈現(無 OMath 原生渲染)。
+description: 把 PDF/圖片 OCR 後轉成使用者指定的目標檔案格式(v1 支援 docx)——bestOCR auto-routing 出 Markdown,再經 macdoc CLI 轉檔。當使用者說「把這個 PDF 轉成 Word」「掃描檔轉 docx」「OCR 完給我 Word 檔」時使用。需要 macdoc CLI;math 密集文件在 pandoc 可用時輸出 Word 原生 OMath 公式,無 pandoc 時以 LaTeX 原文呈現。
 ---
 
 # ocr-to — 任意 PDF/圖片 → 目標格式檔案(v1: docx)
@@ -24,6 +24,9 @@ description: 把 PDF/圖片 OCR 後轉成使用者指定的目標檔案格式(v1
      ```
      (或從 https://github.com/PsychQuant/macdoc 取得 CLI;安裝後**重新 probe**
      再繼續)。不可假裝成功。
+   - **math 轉檔端(選用)**:內容含數學時另 probe `command -v pandoc`——
+     pandoc 把 `$...$`/`$$...$$` 轉成 Word 原生 OMath;缺席不擋(降回
+     macdoc,公式以 LaTeX 字面呈現並聲明)。
    - **OCR 端**:MCP `ocr` tool 優先(plugin 內建,模型保溫);MCP tool 未註冊、
      server 啟動/連線失敗、或 schema 呼叫在建立 job 前就失敗 → fallback
      `command -v bestocr` CLI。**已取得 async job id 後**的中斷 → 繼續
@@ -43,8 +46,11 @@ description: 把 PDF/圖片 OCR 後轉成使用者指定的目標檔案格式(v1
      ```bash
      bestocr run "<input>" --doc-type <type> [--pages 1-3] --out "<workdir>"   # → <stem>.md
      ```
-   - 轉檔:
+   - 轉檔(math-aware 選擇,PsychQuant/bestOCR#3):
      ```bash
+     # 內容含數學且 pandoc 在 → 原生 OMath 公式
+     pandoc "<workdir>/<stem>.md" -o "<workdir>/<stem>.docx"
+     # 無數學,或 pandoc 缺席 → macdoc(公式為 LaTeX 字面)
      macdoc convert --to docx "<workdir>/<stem>.md"              # → 同目錄 <stem>.docx
      ```
    - **路徑安全**:優先走 MCP 參數(JSON 傳值,不經 shell 解析)。組 CLI 指令時
@@ -57,14 +63,16 @@ description: 把 PDF/圖片 OCR 後轉成使用者指定的目標檔案格式(v1
    - 有數學內容時抽查公式(含 `$...$`、`$$...$$` 等 delimiter):**先看 md**——
      md 內公式已缺/亂 → OCR 端問題(引擎/routing);md 正確而 docx 缺/改寫 →
      macdoc 轉檔問題,提議開 issue 到 PsychQuant/macdoc。歸因要分開,不混報。
-6. **回報**:每檔的輸出路徑 + 使用引擎(fallback 鏈照轉述)+ **已知限制聲明**:
-   > 數學公式在 docx 內以 LaTeX 原文呈現(如 `$y = \beta_0 + \beta_1 x$`),
-   > 非 Word 原生公式。OMath 升級追蹤於 PsychQuant/bestOCR#3。
+6. **回報**:每檔的輸出路徑 + 使用引擎(fallback 鏈照轉述)+ 轉檔器聲明:
+   - 走 pandoc → 「公式為 Word 原生 OMath(pandoc 轉換)」
+   - 走 macdoc 且內容含數學 → **限制聲明**:
+     > 數學公式在 docx 內以 LaTeX 原文呈現(如 `$y = \beta_0 + \beta_1 x$`),
+     > 非 Word 原生公式(pandoc 未安裝;裝 pandoc 可得原生公式)。
 
 ## 邊界
 
 - **v1 docx-only**;pdf/pptx/html 等其他 macdoc 支援格式尚未納入(擴充另議)。
-- OCR 品質由 bestOCR 引擎與 evidence routing 決定;轉檔忠實度由 macdoc 決定——
+- OCR 品質由 bestOCR 引擎與 evidence routing 決定;轉檔忠實度由轉檔器(pandoc/macdoc)決定——
   問題分開歸屬(見步驟 5 的先後比對)。
 - **cloud.`*` 不會被自動選中**:auto-routing 的候選來自 Recommender,其結構上
   排除 cloud reference 引擎(spec §6.1.3,有測試釘住)——只有使用者明說要
