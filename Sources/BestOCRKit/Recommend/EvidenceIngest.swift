@@ -8,31 +8,44 @@ import Foundation
 public enum EvidenceIngest {
     /// Convert one runlog entry into evidence rows. Thermal states other than
     /// nominal become a caveat (schema.md hard rule 5), never a silent drop.
+    /// Consensus entries (#12) get DISTINCT estimand strings — the schema's
+    /// never-mix rule then keeps ensemble numbers out of any single-engine
+    /// ranking by construction.
     public static func rows(from entry: RunLogEntry) -> [EvidenceRow] {
         guard !entry.pages.isEmpty else { return [] }
+        let isConsensus = entry.engineID == "consensus"
         let meanSeconds = entry.pages.map(\.seconds).reduce(0, +) / Double(entry.pages.count)
         let hotPages = entry.pages.filter { $0.thermalState != "nominal" }
-        let caveat: String? = hotPages.isEmpty ? nil
+        let thermalCaveat: String? = hotPages.isEmpty ? nil
             : "thermal non-nominal on page(s) "
                 + hotPages.map { "\($0.page) (\($0.thermalState))" }.joined(separator: ", ")
+        let speedCaveat: String? = isConsensus
+            ? ["total compute across the sequential ensemble \(entry.condition.model); "
+               + "not comparable to speed.ms_per_page", thermalCaveat]
+                .compactMap { $0 }.joined(separator: "; ")
+            : thermalCaveat
         var rows = [
-            EvidenceRow(estimand: "speed.ms_per_page",
+            EvidenceRow(estimand: isConsensus ? "speed.ensemble_ms_per_page@v1"
+                                              : "speed.ms_per_page",
                         value: (meanSeconds * 1000).rounded(),
                         condition: entry.condition,
                         tier: "T2",
                         source: "runlog:\(entry.id)",
-                        caveat: caveat)
+                        caveat: speedCaveat)
         ]
         if let quality = entry.quality {
-            // The referent is disclaimed on every row (schema.md hard rule 2):
-            // a cloud model's output is not ground truth and this estimand is
-            // never comparable to word_recall.
+            // The referent is disclaimed on every row (schema.md hard rule 2).
+            // compare: a cloud model's output is not ground truth. consensus:
+            // an internal agreement diagnostic — consensus is not ground truth.
+            let caveat = isConsensus
+                ? "reference = \(quality.reference) — consensus-internal diagnostic, not ground truth; not comparable to word_recall"
+                : "reference = \(quality.reference) — a cloud model output, not ground truth; not comparable to word_recall"
             rows.append(EvidenceRow(estimand: quality.estimand,
                                     value: quality.value,
                                     condition: entry.condition,
                                     tier: "T2",
                                     source: "runlog:\(entry.id)",
-                                    caveat: "reference = \(quality.reference) — a cloud model output, not ground truth; not comparable to word_recall"))
+                                    caveat: caveat))
         }
         return rows
     }

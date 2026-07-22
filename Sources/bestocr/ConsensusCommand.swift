@@ -51,7 +51,8 @@ struct Consensus: AsyncParsableCommand {
         let summary = try await ConsensusPipeline.execute(
             inputPath: input, engineIDs: ids, dpi: dpi, pageSpec: pages,
             languages: languages, docType: docType,
-            outDir: URL(fileURLWithPath: out), registry: registry)
+            outDir: URL(fileURLWithPath: out), registry: registry,
+            runLog: .default())
 
         print("engines: \(summary.engines.joined(separator: ", "))")
         for (id, reason) in summary.skipped.sorted(by: { $0.key < $1.key }) {
@@ -64,5 +65,6 @@ struct Consensus: AsyncParsableCommand {
         }
         print("transcript: \(summary.outputMarkdown.path)")
         print("report: \(summary.outputReport.path)")
+        print("run-id: \(summary.runID) (promote with: bestocr evidence ingest \(summary.runID.prefix(8)))")
     }
 }

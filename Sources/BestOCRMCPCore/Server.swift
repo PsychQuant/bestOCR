@@ -320,6 +320,7 @@ public actor BestOCRMCPServer {
 
         let gate = ocrGate
         let registrySnapshot = registry
+        let runLogSnapshot = runLog
         let work: @Sendable () async throws -> String = {
             try await gate.run {
                 var ids = engineIDs
@@ -333,7 +334,8 @@ public actor BestOCRMCPServer {
                 let summary = try await ConsensusPipeline.execute(
                     inputPath: inputPath, engineIDs: ids, dpi: dpi, pageSpec: pageSpec,
                     languages: languages, docType: docType,
-                    outDir: URL(fileURLWithPath: outDir), registry: registrySnapshot)
+                    outDir: URL(fileURLWithPath: outDir), registry: registrySnapshot,
+                    runLog: runLogSnapshot)
                 return Self.renderConsensusSummary(summary)
             }
         }
@@ -361,6 +363,7 @@ public actor BestOCRMCPServer {
         }
         lines.append("transcript: \(summary.outputMarkdown.path)")
         lines.append("report: \(summary.outputReport.path)")
+        lines.append("run-id: \(summary.runID) (promote with the evidence ingest gate)")
         return lines.joined(separator: "\n")
     }
 

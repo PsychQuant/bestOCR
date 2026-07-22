@@ -30,6 +30,67 @@ struct ConsensusPipelineTests {
         #expect(a > b, "engine with the garbled line must score lower")
     }
 
+    @Test func consensusRunLogEntryIsExplicitComposite() {
+        // #12: the ensemble is the unit under measurement — never crammed
+        // into a single member engine's fields (that would poison the
+        // evidence condition semantics).
+        let entry = RunLogEntry(
+            consensusOf: ["B": result("B", "x\ny"), "A": result("A", "x\ny")],
+            input: "/tmp/in.pdf", output: "/tmp/out.md",
+            quality: .init(estimand: "consensus.low_consensus_share@v1", value: 0.25,
+                           reference: "engines=A+B;converged=true"))
+        #expect(entry.engineID == "consensus")
+        #expect(entry.condition.model == "A+B")
+        #expect(entry.condition.platform == "consensus")
+        #expect(entry.condition.quant == "n/a")
+        #expect(entry.pages.count == 1)
+        #expect(abs(entry.pages[0].seconds - 0.2) < 1e-9,
+                "page seconds are the ensemble TOTAL across engines")
+        #expect(entry.quality?.estimand == "consensus.low_consensus_share@v1")
+    }
+
+    @Test func consensusEntryIngestsAsEnsembleEstimands() {
+        // #12: distinct estimand strings keep ensemble numbers out of any
+        // single-engine ranking (schema.md hard rule — never mixed), and the
+        // quality caveat must speak consensus, not compare's cloud wording.
+        let entry = RunLogEntry(
+            consensusOf: ["A": result("A", "x"), "B": result("B", "x")],
+            input: "/tmp/in.pdf", output: "/tmp/out.md",
+            quality: .init(estimand: "consensus.low_consensus_share@v1", value: 0.1,
+                           reference: "engines=A+B;converged=true"))
+        let rows = EvidenceIngest.rows(from: entry)
+        #expect(rows.count == 2)
+        #expect(rows[0].estimand == "speed.ensemble_ms_per_page@v1")
+        #expect(rows[0].caveat?.contains("ensemble") == true)
+        #expect(rows[1].estimand == "consensus.low_consensus_share@v1")
+        #expect(rows[1].caveat?.contains("not ground truth") == true)
+        #expect(rows[1].caveat?.contains("cloud") != true,
+                "consensus quality must not inherit compare's cloud caveat")
+    }
+
+    @Test func executeWritesConsensusRunLogEntry() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("consensus-runlog-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")!
+        let img = tmp.appendingPathComponent("fixture.png")
+        try png.write(to: img)
+        let runLog = RunLog(fileURL: tmp.appendingPathComponent("runlog.jsonl"))
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello"),
+            StubEngine(id: "B", availability: .available, text: "hello"),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150, pageSpec: "",
+            languages: [], docType: "test", outDir: tmp.appendingPathComponent("out"),
+            registry: registry, runLog: runLog)
+        #expect(!summary.runID.isEmpty)
+        let log = try String(contentsOf: runLog.fileURL, encoding: .utf8)
+        #expect(log.contains("\"engineID\":\"consensus\""))
+        #expect(log.contains(summary.runID))
+    }
+
     @Test func writeOutputsProducesTranscriptAndReport() throws {
         // Fixture note (r2): a same-position disagreement now gets outvoted
         // via equal-gap pairing (correct — not low consensus). To exercise

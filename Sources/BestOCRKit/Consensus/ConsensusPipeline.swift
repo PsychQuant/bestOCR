@@ -7,6 +7,8 @@ public struct ConsensusRunSummary: Sendable {
     public let engines: [String]
     public let skipped: [String: String]   // engineID → reason
     public let estimate: ConsensusEstimate
+    /// Runlog entry id (#12) — the handle `bestocr evidence ingest` takes.
+    public let runID: String
 }
 
 /// Multi-engine consensus flow (#11): run N engines over the same normalized
@@ -75,7 +77,8 @@ public enum ConsensusPipeline {
     /// consensus (spec: CCT needs corroboration; ≥3 recommended, ≥2 hard floor).
     public static func execute(inputPath: String, engineIDs: [String], dpi: Double,
                                pageSpec: String, languages: [String], docType: String,
-                               outDir: URL, registry: EngineRegistry) async throws -> ConsensusRunSummary {
+                               outDir: URL, registry: EngineRegistry,
+                               runLog: RunLog) async throws -> ConsensusRunSummary {
         var skipped: [String: String] = [:]
         var candidates: [any OCREngine] = []
         for id in engineIDs {
@@ -123,11 +126,25 @@ public enum ConsensusPipeline {
                                        engines: results.keys.sorted(),
                                        skipped: skipped,
                                        inputPath: inputPath, outDir: outDir)
+
+        // Provenance (#12): one explicit composite entry — the ensemble is
+        // the unit under measurement. Promotion to evidence rows stays behind
+        // the manual `evidence ingest <run-id>` gate.
+        let share = estimate.items.isEmpty ? 0
+            : Double(estimate.items.filter(\.lowConsensus).count) / Double(estimate.items.count)
+        let entry = RunLogEntry(
+            consensusOf: results, input: inputPath, output: outputs.markdown.path,
+            quality: .init(estimand: "consensus.low_consensus_share@v1",
+                           value: share,
+                           reference: "engines=\(results.keys.sorted().joined(separator: "+"));converged=\(estimate.converged)"))
+        try runLog.append(entry)
+
         return ConsensusRunSummary(outputMarkdown: outputs.markdown,
                                    outputReport: outputs.report,
                                    engines: results.keys.sorted(),
                                    skipped: skipped,
-                                   estimate: estimate)
+                                   estimate: estimate,
+                                   runID: entry.id)
     }
 }
 
