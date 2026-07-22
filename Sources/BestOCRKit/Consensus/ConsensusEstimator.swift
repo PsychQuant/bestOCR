@@ -56,7 +56,8 @@ public enum ConsensusEstimator {
                 let win = weightedWinner(item: item, perKind: perKind)
                 next[idx] = win.text
                 nextWinners[idx] = win
-                let supporters = item.responses.values.filter { $0 == win.text }.count
+                let supporters = item.responses.values
+                    .filter { ItemExtractor.canonicalLabel($0) == win.text }.count
                 if win.topTie || supporters < 2 { nextUninformative.insert(idx) }
             }
             let stable = (next == assignment && nextUninformative == uninformative)
@@ -77,9 +78,17 @@ public enum ConsensusEstimator {
         var verdicts: [ItemConsensus] = []
         for (idx, item) in items.enumerated() {
             let win = winners[idx]!
+            // Output text: deterministic raw representative of the winning
+            // canonical label (win.text is the canonical form). Confidence:
+            // winning share measured under the PUBLISHED terminal
+            // competences — never a stale prior round's.
+            let representative = item.responses.values
+                .filter { ItemExtractor.canonicalLabel($0) == win.text }
+                .min() ?? win.text
             verdicts.append(ItemConsensus(key: item.key,
-                                          consensusText: win.text,
-                                          confidence: win.share,
+                                          consensusText: representative,
+                                          confidence: terminalShare(item: item, label: win.text,
+                                                                    perKind: perKind),
                                           lowConsensus: uninformative.contains(idx),
                                           responses: item.responses))
         }
@@ -92,7 +101,7 @@ public enum ConsensusEstimator {
             for (idx, item) in items.enumerated() {
                 guard !uninformative.contains(idx), let r = item.responses[engine] else { continue }
                 n += 1
-                if r == assignment[idx] { correct += 1 }
+                if ItemExtractor.canonicalLabel(r) == assignment[idx] { correct += 1 }
             }
             overall[engine] = Double(correct + 1) / Double(n + 2)
         }
@@ -109,15 +118,16 @@ public enum ConsensusEstimator {
 
     private struct Winner { let text: String; let share: Double; let topTie: Bool }
 
-    /// Competence-weighted plurality with deterministic lexicographic
-    /// tie-break. Returns the winner, its weight share, and whether the top
-    /// weight was tied (within epsilon).
+    /// Competence-weighted plurality over CANONICAL vote labels (rendering
+    /// differences like `$…$` delimiters are not disagreements) with
+    /// deterministic lexicographic tie-break. Returns the winning canonical
+    /// label, its weight share, and whether the top weight was tied.
     private static func weightedWinner(item: AlignedItem,
                                        perKind: [String: [ItemKind: Double]]) -> Winner {
         var tally: [String: Double] = [:]
         for (engine, response) in item.responses {
             let w = perKind[engine]?[item.key.kind] ?? defaultCompetence
-            tally[response, default: 0] += w
+            tally[ItemExtractor.canonicalLabel(response), default: 0] += w
         }
         // Deterministic order: weight desc, then text asc.
         let ranked = tally.sorted { ($0.value, $1.key) > ($1.value, $0.key) }
@@ -127,6 +137,20 @@ public enum ConsensusEstimator {
         return Winner(text: top.key,
                       share: total > 0 ? top.value / total : 0,
                       topTie: topTie)
+    }
+
+    /// Weight share of `label` on this item under the given (terminal)
+    /// competences — the published confidence must be measurable from the
+    /// published competence values.
+    private static func terminalShare(item: AlignedItem, label: String,
+                                      perKind: [String: [ItemKind: Double]]) -> Double {
+        var winning = 0.0, total = 0.0
+        for (engine, response) in item.responses {
+            let w = perKind[engine]?[item.key.kind] ?? defaultCompetence
+            total += w
+            if ItemExtractor.canonicalLabel(response) == label { winning += w }
+        }
+        return total > 0 ? winning / total : 0
     }
 
     /// Per-kind Laplace competence: (correct + 1) / (n + 2) over the items of
@@ -142,7 +166,7 @@ public enum ConsensusEstimator {
                 var kindCounts = counts[engine] ?? [:]
                 var c = kindCounts[item.key.kind] ?? (0, 0)
                 c.n += 1
-                if response == consensus[idx] { c.correct += 1 }
+                if ItemExtractor.canonicalLabel(response) == consensus[idx] { c.correct += 1 }
                 kindCounts[item.key.kind] = c
                 counts[engine] = kindCounts
             }
@@ -171,7 +195,9 @@ public enum ConsensusEstimator {
                 for item in items {
                     guard let ra = item.responses[a], let rb = item.responses[b] else { continue }
                     n += 1
-                    if ra == rb { agree += 1 }
+                    if ItemExtractor.canonicalLabel(ra) == ItemExtractor.canonicalLabel(rb) {
+                        agree += 1
+                    }
                 }
                 guard n > 0 else { continue }
                 out[a, default: [:]][b] = Double(agree) / Double(n)

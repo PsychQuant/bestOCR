@@ -74,6 +74,22 @@ public enum ItemExtractor {
         if line.hasPrefix("$$") || line.hasPrefix("\\[") { return true }
         return line.filter { $0 == "$" }.count >= 2
     }
+
+    /// Canonical vote/match label: strips PAIRED OUTER math delimiters only —
+    /// `$…$` / `$$…$$` are rendering choices, interior or unpaired `$` is
+    /// content (currency). Never strips down to empty. Voting, supporter
+    /// counting, and cross-rendering matching all use this relation; stored
+    /// responses keep the engine's raw rendering.
+    static func canonicalLabel(_ s: String) -> String {
+        var t = s
+        if t.hasPrefix("$$"), t.hasSuffix("$$"), t.count >= 5 {
+            t = String(t.dropFirst(2).dropLast(2))
+        } else if t.hasPrefix("$"), t.hasSuffix("$"), t.count >= 3 {
+            t = String(t.dropFirst().dropLast())
+        }
+        let out = normalize(t)
+        return out.isEmpty ? s : out
+    }
 }
 
 /// Spine alignment (#11): the engine with the (upper-)median item count per
@@ -84,6 +100,9 @@ public enum ItemExtractor {
 public enum ConsensusAlignment {
 
     static let similarityThreshold = 0.6
+    /// Content-evidence floor for CROSS-kind equal-gap pairs (same-kind pairs
+    /// keep position-only trust so garbled lines still land together).
+    static let crossKindGapSimilarityFloor = 0.3
 
     public static func align(page: Int, extractions: [String: [ExtractedItem]]) -> [AlignedItem] {
         guard !extractions.isEmpty else { return [] }
@@ -128,8 +147,10 @@ public enum ConsensusAlignment {
         // Cross-merge solo items: unmatched items from DIFFERENT engines that
         // are the same content must corroborate each other, not fragment into
         // per-engine singletons. Greedy grouping by compatible kind +
-        // similarity (math compared with `$` stripped); one engine
-        // contributes at most once per group. Group kind = first exemplar's.
+        // similarity (math compared via canonicalLabel); one engine
+        // contributes at most once per group. Group kind is content-based:
+        // .math wins if ANY member saw math syntax — independent of engine
+        // naming/order (a rendering artifact must not decide attribution).
         var groups: [(kind: ItemKind, exemplar: ExtractedItem, responses: [String: String])] = []
         for (engine, item) in solo.sorted(by: { $0.engine < $1.engine }) {
             var placed = false
@@ -138,6 +159,7 @@ public enum ConsensusAlignment {
                 let te = matchText(groups[g].exemplar), ti = matchText(item)
                 if te == ti || similarity(te, ti) >= similarityThreshold {
                     groups[g].responses[engine] = item.normalized
+                    if item.kind == .math { groups[g].kind = .math }
                     placed = true
                     break
                 }
@@ -206,7 +228,15 @@ public enum ConsensusAlignment {
             if gapS > 0, gapS == gapO {
                 for t in 0..<gapS {
                     let si = prevS + 1 + t, oi = prevO + 1 + t
-                    if kindCompatible(spine[si].kind, other[oi].kind) {
+                    let sk = spine[si].kind, ok = other[oi].kind
+                    if sk == ok {
+                        extra.append((si, oi))
+                    } else if kindCompatible(sk, ok),
+                              similarity(matchText(spine[si]), matchText(other[oi]))
+                                  >= crossKindGapSimilarityFloor {
+                        // Cross-kind positional pairing is a NEW surface —
+                        // demand weak content evidence so a prose
+                        // hallucination cannot substitute for a math line.
                         extra.append((si, oi))
                     }
                 }
@@ -227,12 +257,12 @@ public enum ConsensusAlignment {
         return Set([a, b]) == Set([ItemKind.math, .proseLine])
     }
 
-    /// Comparison key: math renderings drop their `$` delimiters so
+    /// Comparison key: math renderings drop their paired outer delimiters so
     /// `$E = mc^2$` and `E = mc^2` compare equal. Stored responses keep the
     /// engine's actual rendering — this is matching-only.
     private static func matchText(_ item: ExtractedItem) -> String {
         guard item.kind == .math else { return item.normalized }
-        return ItemExtractor.normalize(item.normalized.replacingOccurrences(of: "$", with: ""))
+        return ItemExtractor.canonicalLabel(item.normalized)
     }
 
     private static func matches(_ a: ExtractedItem, _ b: ExtractedItem) -> Bool {

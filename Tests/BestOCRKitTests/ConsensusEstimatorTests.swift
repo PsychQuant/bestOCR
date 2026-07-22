@@ -131,6 +131,49 @@ struct ConsensusEstimatorTests {
         }
     }
 
+    @Test func mathAndProseRenderingsCorroborateInVoting() {
+        // Round-2 finding: alignment put the two renderings on one item, but
+        // voting still used raw-string equality — `$E = mc^2$` vs `E = mc^2`
+        // stayed a 2-way tie (lowConsensus, excluded from competence).
+        // Canonical vote labels must make them the SAME answer; the output
+        // keeps a deterministic raw representative.
+        let it = AlignedItem(key: ItemKey(page: 1, index: 0, kind: .math),
+                             responses: ["paddle": "$E = mc^2$", "vision": "E = mc^2"])
+        let est = ConsensusEstimator.estimate(items: [it])
+        #expect(est.items.first?.lowConsensus == false,
+                "two renderings of one answer must corroborate, not tie")
+        #expect(est.items.first?.consensusText == "$E = mc^2$",
+                "representative rendering is the lexicographically smallest raw")
+    }
+
+    @Test func confidenceIsMeasuredUnderPublishedCompetence() {
+        // Round-2 finding: at the iteration cap the verdict confidence was a
+        // stale share from the pre-terminal weights. It must be recomputable
+        // from the PUBLISHED per-kind competences. (Fixture is math-free, so
+        // raw equality is the vote-label relation here.)
+        var items: [AlignedItem] = []
+        for i in 0..<6 {
+            var r = ["A": "t\(i)", "B": "t\(i)", "C": "t\(i)"]
+            if i.isMultiple(of: 2) { r["C"] = "z\(i)" }
+            items.append(item(i, r))
+        }
+        items.append(item(50, ["A": "u", "B": "u", "C": "v"]))
+        for maxIter in [1, 20] {
+            let est = ConsensusEstimator.estimate(items: items, maxIterations: maxIter)
+            for v in est.items {
+                var winning = 0.0, total = 0.0
+                for (engine, resp) in v.responses {
+                    let w = est.competence[engine]?[v.key.kind] ?? 0.5
+                    total += w
+                    if resp == v.consensusText { winning += w }
+                }
+                let expected = total > 0 ? winning / total : 0
+                #expect(abs(v.confidence - expected) < 1e-12,
+                        "item \(v.key.index) @maxIter=\(maxIter): confidence \(v.confidence), expected \(expected)")
+            }
+        }
+    }
+
     @Test func convergedFlagReportsFixedPointVsCap() {
         // Hitting maxIterations is not convergence — the caller must be able
         // to tell a fixed point from a cap-interrupted run.

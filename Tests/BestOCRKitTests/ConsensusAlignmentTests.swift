@@ -85,6 +85,55 @@ struct ConsensusAlignmentTests {
         #expect(solo.count == 1, "B's LaTeX and C's plain rendering must share one item")
     }
 
+    @Test func canonicalLabelStripsOnlyPairedOuterDelimiters() {
+        // The vote-label relation: paired OUTER math delimiters are a
+        // rendering choice; interior/unpaired `$` is content (currency).
+        #expect(ItemExtractor.canonicalLabel("$E = mc^2$") == "E = mc^2")
+        #expect(ItemExtractor.canonicalLabel("$$x$$") == "x")
+        #expect(ItemExtractor.canonicalLabel("$5 and $6") == "$5 and $6")
+        #expect(ItemExtractor.canonicalLabel("$5") == "$5")
+        #expect(ItemExtractor.canonicalLabel("plain") == "plain")
+    }
+
+    @Test func crossKindGapPairingNeedsContentEvidence() {
+        // Round-2 finding: equal-gap pairing is positional-only; widening it
+        // to math↔prose must not let an unrelated prose hallucination
+        // substitute for a math line at the same position.
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: "head\n$x + y$\ntail"),
+            "B": ItemExtractor.extract(page: 1, text: "head\nTOTAL DUE\ntail"),
+        ])
+        let singles = aligned.filter { $0.responses.count == 1 }
+        #expect(singles.count == 2, "unrelated cross-kind lines at the same position must fork, not merge")
+
+        // …while a garbled rendering of the SAME math must still pair.
+        let garbled = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: "head\n$x + y$\ntail"),
+            "B": ItemExtractor.extract(page: 1, text: "head\nx + v\ntail"),
+        ])
+        #expect(garbled.count == 3, "garbled rendering of the same math must still land on one item")
+    }
+
+    @Test func mergedCrossKindGroupKindIsEngineOrderIndependent() {
+        // Round-2 finding: the merged group's kind came from the first
+        // exemplar (engine-name order) — renaming engines flipped the item
+        // kind and with it the per-kind competence attribution. Math content
+        // identity must win regardless of which engine is seen first.
+        let short = "l1\nl2"
+        func mergedKind(mathEngine: String, proseEngine: String) -> ItemKind? {
+            let aligned = ConsensusAlignment.align(page: 1, extractions: [
+                "A": ItemExtractor.extract(page: 1, text: short),
+                "D": ItemExtractor.extract(page: 1, text: short),
+                "E": ItemExtractor.extract(page: 1, text: short),
+                mathEngine: ItemExtractor.extract(page: 1, text: "l1\n$x + y$\nl2"),
+                proseEngine: ItemExtractor.extract(page: 1, text: "l1\nx + y\nl2"),
+            ])
+            return aligned.first { $0.responses.count == 2 }?.key.kind
+        }
+        #expect(mergedKind(mathEngine: "B", proseEngine: "C") == .math)
+        #expect(mergedKind(mathEngine: "C", proseEngine: "B") == .math)
+    }
+
     @Test func spineIsMedianLineCountEngine() {
         // Degenerate engine (loop garbage → 1 line) must not become the spine.
         let a = ["l1", "l2", "l3"]
