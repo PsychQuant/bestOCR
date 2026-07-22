@@ -4,7 +4,7 @@ import Foundation
 /// condition tuple (evidence/schema.md §3) until git-sha stamping arrives.
 public enum BestOCRVersion {
     /// Plain semver for surfaces that require it (MCP server info, plugin.json).
-    public static let semver = "0.5.1"
+    public static let semver = "0.6.2"
     /// Derived, never hand-written — a hardcoded copy drifted to "0.1.0-dev"
     /// while semver moved on, corrupting every evidence row's instrument
     /// field (#10).
