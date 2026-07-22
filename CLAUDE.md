@@ -25,7 +25,9 @@ Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
                            ExternalToolEngine(+ Subprocess、ModelProfile)
   Adapters/*.py            OCR protocol v1 Python adapters(SPM resource)
   Recommend/               WorkloadSpec / EvidenceStore / Recommender
-Sources/bestocr/           CLI 薄殼(run / list-engines / recommend)
+  Consensus/               ItemExtractor / ConsensusAlignment /
+                           ConsensusEstimator(Dawid-Skene-lite) / Pipeline
+Sources/bestocr/           CLI 薄殼(run / list-engines / recommend / consensus)
 repos/measureOCR           ❄️ 凍結儀器(article 1 pin)— 絕不修改
 evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未來)
 ```
@@ -80,6 +82,12 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   三號統一,version-gap 終結):#8 wrapper sha256 驗證(404-body 假陽性
   gate);#9 evidence 觸達(defaultURL 三層鏈 → `~/.bestocr/evidence.jsonl`,
   wrapper 順抓 rows;ingest write-path 解耦);#10 版本字串由 semver 派生
+- ✅ P7 consensus chain(2026-07-23,PR #14 merge `963cad7`):#11 多引擎
+  CCT/Dawid-Skene-lite 共識(canonical vote labels、per-kind competence、
+  agreement 診斷、`converged`+cap-reversal);#12 evidence 整合(composite
+  runlog entry、`speed.ensemble_ms_per_page@v1` 獨立 estimand never-mix);
+  #13 robustness hardening(placeholder 棄權、gap-interval solo 合併、
+  資源上限、cloud/needsNetwork 拒絕、`schema_version: 2`)。171/171 tests
 - Backlog:text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 
 ## Cloud reference 備忘(M4)

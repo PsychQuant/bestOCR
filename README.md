@@ -17,7 +17,7 @@ never ranked). `bestocr compare` runs a local engine against a cloud
 reference with a named metric (`quality.token_recall_vs_cloud@v1` — not
 ground truth). `bestocr evidence ingest <run-id>` is the explicit gate that
 promotes a runlog entry to T2 rows — run → ingest → RANKED recommend closes
-the loop. Agents get the same via `bestocr-mcp` (six tools incl. async job
+the loop. Agents get the same via `bestocr-mcp` (seven tools incl. async job
 polling; heavy OCR single-flighted). Spec:
 `docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`.
 
@@ -49,8 +49,9 @@ claude plugin marketplace add PsychQuant/bestOCR
 claude plugin install bestocr@bestocr
 ```
 
-MCP tools: `ocr` (sync, or `async: true` → `job_id`), `recommend`,
-`list_engines`, `list_models`, `ocr_status`, `ocr_result` (long-poll). The
+MCP tools: `ocr` (sync, or `async: true` → `job_id`), `consensus`,
+`recommend`, `list_engines`, `list_models`, `ocr_status`, `ocr_result`
+(long-poll). The
 server process persists across calls; VLM warmth lives in the local Ollama
 server (`keep_alive`), and concurrent heavy OCR is serialized so the model
 server and Python tools are never overloaded.
