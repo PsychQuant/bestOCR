@@ -30,4 +30,6 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
 - competence 是「與共識一致率」（Laplace 平滑），不是對 ground truth 的正確率；
   無人 corroborate 的 solo item 與平票 item 不計入 competence。
 - 引擎**逐一**執行（本機 VLM 共享 GPU／模型伺服器，循序是刻意設計，非平行）。
-- 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點（結果仍內部一致）。
+- 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點；competence 仍是對
+  已發布 verdict 的一致率（內部一致），而在發布 competence 下不再是贏家的
+  verdict 會被強制標為低共識送人工複核。

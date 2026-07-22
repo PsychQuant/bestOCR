@@ -72,6 +72,21 @@ public enum ConsensusEstimator {
         // Terminal state: verdicts ARE the last E-step, and competences are
         // measured against that same assignment — consistent by construction.
         // At a fixed point this recompute equals the in-loop M-step exactly.
+        //
+        // Cap interrupt: the E-step labels were produced under PRE-terminal
+        // competences, so a label can be a LOSER under the published ones
+        // (the EM fixed-point equations cannot all hold pre-convergence).
+        // Single pass, not chased to a fixed point: flag such items
+        // uninformative → lowConsensus, keeping them out of the published
+        // competence measurements; `converged=false` marks the state.
+        if !converged {
+            let terminal = competences(items: items, consensus: assignment,
+                                       excluding: uninformative, engines: engines)
+            for (idx, item) in items.enumerated()
+            where weightedWinner(item: item, perKind: terminal).text != winners[idx]!.text {
+                uninformative.insert(idx)
+            }
+        }
         perKind = competences(items: items, consensus: assignment,
                               excluding: uninformative, engines: engines)
 
@@ -84,7 +99,7 @@ public enum ConsensusEstimator {
             // competences — never a stale prior round's.
             let representative = item.responses.values
                 .filter { ItemExtractor.canonicalLabel($0) == win.text }
-                .min() ?? win.text
+                .min { $0.utf8.lexicographicallyPrecedes($1.utf8) } ?? win.text
             verdicts.append(ItemConsensus(key: item.key,
                                           consensusText: representative,
                                           confidence: terminalShare(item: item, label: win.text,

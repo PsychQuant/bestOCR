@@ -174,6 +174,24 @@ struct ConsensusEstimatorTests {
         }
     }
 
+    @Test func capReversalIsFlaggedLowConsensus() {
+        // Round-2 (Codex): at the iteration cap, the published competences
+        // can make the published label a LOSER under the report's own
+        // weights (EM fixed-point equations can't all hold pre-convergence).
+        // Such a verdict must not ship quietly as high-consensus: flag it
+        // and keep it out of the competence measurements.
+        var items: [AlignedItem] = []
+        items.append(item(0, ["A": "X", "B": "X", "C": "Y"]))
+        for i in 1...10 {
+            items.append(item(i, ["A": "wa\(i)", "B": "wb\(i)", "C": "t\(i)", "D": "t\(i)"]))
+        }
+        let est = ConsensusEstimator.estimate(items: items, maxIterations: 1)
+        #expect(!est.converged)
+        let target = est.items.first { $0.key.index == 0 }
+        #expect(target?.lowConsensus == true,
+                "label that loses under the published competences must be routed to review")
+    }
+
     @Test func convergedFlagReportsFixedPointVsCap() {
         // Hitting maxIterations is not convergence — the caller must be able
         // to tell a fixed point from a cap-interrupted run.

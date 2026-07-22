@@ -77,18 +77,25 @@ public enum ItemExtractor {
 
     /// Canonical vote/match label: strips PAIRED OUTER math delimiters only —
     /// `$…$` / `$$…$$` are rendering choices, interior or unpaired `$` is
-    /// content (currency). Never strips down to empty. Voting, supporter
-    /// counting, and cross-rendering matching all use this relation; stored
-    /// responses keep the engine's raw rendering.
+    /// content (currency), an escaped closing `\$` is content too. Mismatched
+    /// delimiter widths (`$$…$`, `$…$$`, `$$$$`) never downgrade to the
+    /// single-`$` rule. Normalizes FIRST so the function is idempotent and
+    /// never strips down to empty. Voting, supporter counting, and
+    /// cross-rendering matching all use this relation; stored responses keep
+    /// the engine's raw rendering.
     static func canonicalLabel(_ s: String) -> String {
-        var t = s
+        let n = normalize(s)
+        var t = n
         if t.hasPrefix("$$"), t.hasSuffix("$$"), t.count >= 5 {
             t = String(t.dropFirst(2).dropLast(2))
-        } else if t.hasPrefix("$"), t.hasSuffix("$"), t.count >= 3 {
+        } else if t.hasPrefix("$$") || t.hasSuffix("$$") {
+            return n
+        } else if t.hasPrefix("$"), t.hasSuffix("$"), t.count >= 3,
+                  !String(t.dropLast()).hasSuffix("\\") {
             t = String(t.dropFirst().dropLast())
         }
         let out = normalize(t)
-        return out.isEmpty ? s : out
+        return out.isEmpty ? n : out
     }
 }
 

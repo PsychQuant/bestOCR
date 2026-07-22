@@ -93,6 +93,16 @@ struct ConsensusAlignmentTests {
         #expect(ItemExtractor.canonicalLabel("$5 and $6") == "$5 and $6")
         #expect(ItemExtractor.canonicalLabel("$5") == "$5")
         #expect(ItemExtractor.canonicalLabel("plain") == "plain")
+        // Mismatched delimiter widths never downgrade to the single-$ rule.
+        #expect(ItemExtractor.canonicalLabel("$$$$") == "$$$$")
+        #expect(ItemExtractor.canonicalLabel("$$x$") == "$$x$")
+        #expect(ItemExtractor.canonicalLabel("$x$$") == "$x$$")
+        // An escaped closing dollar is content, not a delimiter.
+        #expect(ItemExtractor.canonicalLabel("$x\\$") == "$x\\$")
+        // Normalization happens before delimiter detection → idempotent.
+        #expect(ItemExtractor.canonicalLabel(" $x$ ") == "x")
+        #expect(ItemExtractor.canonicalLabel(ItemExtractor.canonicalLabel(" $x$ "))
+                == ItemExtractor.canonicalLabel(" $x$ "))
     }
 
     @Test func crossKindGapPairingNeedsContentEvidence() {
