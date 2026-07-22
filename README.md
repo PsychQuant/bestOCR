@@ -121,8 +121,17 @@ bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/
 bestocr recommend --doc-type math_pdf --math --priority quality
 bestocr compare page.png --engine vision --vs cloud.claude
+bestocr consensus scan.pdf --doc-type gov_doc   # multi-engine CCT adjudication
 bestocr evidence ingest <run-id>                # runlog → T2 rows (explicit gate)
 ```
+
+`consensus` runs ≥2 local engines over the same input, aligns items
+(line-primary, table cells split), and adjudicates disagreements with a
+Dawid-Skene-lite estimator: consensus transcript (`<stem>.consensus.md`, ⚠
+marks low-consensus items) + per-engine per-kind competence and a
+low-consensus review list (`<stem>.consensus.json`). Consensus is not ground
+truth — the report's `agreement` matrix surfaces inter-engine error
+correlation as a diagnostic. MCP tool: `consensus` (supports `async=true`).
 
 Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
 `vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl`, `cloud.claude`,
