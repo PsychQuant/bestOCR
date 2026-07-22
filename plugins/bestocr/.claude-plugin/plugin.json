@@ -1,6 +1,6 @@
 {
   "name": "bestocr",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "bestOCR for agents: the bestocr-mcp MCP server (evidence-based multi-engine OCR — ocr with auto routing + fallback chain, recommend/list_engines/list_models, ocr_status/ocr_result async polling; notarized binary auto-downloaded on install) plus workflow skills (ocr — any PDF/image → Markdown; compare — local vs cloud reference; evidence-ingest — runlog → T2 gate). Recommendations are evidence-labelled, never guesses.",
   "author": {
     "name": "PsychQuant",
