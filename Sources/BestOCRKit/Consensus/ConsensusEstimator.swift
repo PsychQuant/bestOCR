@@ -7,13 +7,19 @@ import Foundation
 /// item. Iterate: competence-weighted plurality per item → per-kind Laplace
 /// competence per engine → repeat until the consensus assignment is stable.
 ///
-/// Honest limits (issue #11 Clarity resolutions):
+/// Honest limits (issue #11 Clarity resolutions + verify findings):
 /// - Weights are the per-kind competence values themselves (monotone,
 ///   bounded by Laplace smoothing) — not log-odds; documented MVP choice.
-/// - Without ground truth, a two-engine tie broken lexicographically will
-///   self-reinforce the winner's competence; the `lowConsensus` flag (winner
-///   corroborated by fewer than two engines, or a top-weight tie) is the
-///   guard that routes such items to human review.
+/// - Uninformative items (top-weight tie, or winner corroborated by fewer
+///   than two engines) never enter competence: a tie's lexicographic winner
+///   would poison cold start, and a solo item's winner is trivially its own
+///   response — crediting it lets a hallucinating engine outrank accurate
+///   ones (verify #11 finding 2). The same items carry the `lowConsensus`
+///   flag routing them to human review.
+/// - Verdicts, per-kind competence, and overall competence are all derived
+///   from the SAME terminal E-step assignment, so the report stays
+///   internally consistent even when `maxIterations` interrupts EM
+///   (verify #11 finding 3); `converged` says which case occurred.
 /// - Inter-engine error correlation (shared failure modes) inflates
 ///   competence; the pairwise `agreement` matrix surfaces it as a diagnostic
 ///   and no correction is applied in the MVP.
@@ -22,65 +28,71 @@ public enum ConsensusEstimator {
     private static let defaultCompetence = 0.5
     private static let tieEpsilon = 1e-9
 
-    public static func estimate(items: [AlignedItem], maxIterations: Int = 20) -> ConsensusEstimate {
+    public static func estimate(items allItems: [AlignedItem], maxIterations: Int = 20) -> ConsensusEstimate {
+        // Empty-response items carry no signal and would trap weightedWinner
+        // (public-API hardening — the pipeline never builds them).
+        let items = allItems.filter { !$0.responses.isEmpty }
         guard !items.isEmpty else {
             return ConsensusEstimate(items: [], overallCompetence: [:], competence: [:],
-                                     agreement: [:], iterations: 0)
+                                     agreement: [:], iterations: 0, converged: true)
         }
 
         let engines = Set(items.flatMap { $0.responses.keys }).sorted()
 
         // competence[engine][kind], only for kinds the engine actually answered.
         var perKind: [String: [ItemKind: Double]] = [:]
-        var consensus: [Int: String] = [:]
+        var assignment: [Int: String] = [:]
+        var uninformative: Set<Int> = []
+        var winners: [Int: Winner] = [:]
         var iterations = 0
+        var converged = false
 
         for _ in 1...max(1, maxIterations) {
             iterations += 1
             var next: [Int: String] = [:]
-            var tied: Set<Int> = []
+            var nextUninformative: Set<Int> = []
+            var nextWinners: [Int: Winner] = [:]
             for (idx, item) in items.enumerated() {
                 let win = weightedWinner(item: item, perKind: perKind)
                 next[idx] = win.text
-                if win.topTie { tied.insert(idx) }
+                nextWinners[idx] = win
+                let supporters = item.responses.values.filter { $0 == win.text }.count
+                if win.topTie || supporters < 2 { nextUninformative.insert(idx) }
             }
-            // Tied items carry no information this round — crediting the
-            // lexicographic winner would poison competence at cold start
-            // (observed: a 3-way tie handing the win to the alphabetically
-            // smallest garbage string). Skip them in the M-step.
-            let newPerKind = competences(items: items, consensus: next,
-                                         excluding: tied, engines: engines)
-            let converged = (next == consensus)
-            consensus = next
-            perKind = newPerKind
-            if converged { break }
+            let stable = (next == assignment && nextUninformative == uninformative)
+            assignment = next
+            uninformative = nextUninformative
+            winners = nextWinners
+            if stable { converged = true; break }
+            perKind = competences(items: items, consensus: assignment,
+                                  excluding: uninformative, engines: engines)
         }
 
-        // Final per-item verdicts from the converged state.
+        // Terminal state: verdicts ARE the last E-step, and competences are
+        // measured against that same assignment — consistent by construction.
+        // At a fixed point this recompute equals the in-loop M-step exactly.
+        perKind = competences(items: items, consensus: assignment,
+                              excluding: uninformative, engines: engines)
+
         var verdicts: [ItemConsensus] = []
-        var finalTied: Set<Int> = []
         for (idx, item) in items.enumerated() {
-            let win = weightedWinner(item: item, perKind: perKind)
-            let supporters = item.responses.values.filter { $0 == win.text }.count
-            let low = win.topTie || supporters < 2
-            if win.topTie { finalTied.insert(idx) }
+            let win = winners[idx]!
             verdicts.append(ItemConsensus(key: item.key,
                                           consensusText: win.text,
                                           confidence: win.share,
-                                          lowConsensus: low,
+                                          lowConsensus: uninformative.contains(idx),
                                           responses: item.responses))
-            consensus[idx] = win.text
         }
 
-        // Overall competence: pooled Laplace across kinds; tie-resolved items
-        // stay excluded (uninformative — same rule as the M-step).
+        // Overall competence: pooled Laplace across kinds, uninformative
+        // items excluded — the same rule as the M-step.
         var overall: [String: Double] = [:]
         for engine in engines {
             var n = 0, correct = 0
             for (idx, item) in items.enumerated() {
-                guard !finalTied.contains(idx), let r = item.responses[engine] else { continue }
+                guard !uninformative.contains(idx), let r = item.responses[engine] else { continue }
                 n += 1
-                if r == consensus[idx] { correct += 1 }
+                if r == assignment[idx] { correct += 1 }
             }
             overall[engine] = Double(correct + 1) / Double(n + 2)
         }
@@ -89,7 +101,8 @@ public enum ConsensusEstimator {
                                  overallCompetence: overall,
                                  competence: perKind,
                                  agreement: agreementMatrix(items: items, engines: engines),
-                                 iterations: iterations)
+                                 iterations: iterations,
+                                 converged: converged)
     }
 
     // MARK: - Internals

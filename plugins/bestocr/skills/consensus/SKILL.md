@@ -1,6 +1,6 @@
 ---
 name: consensus
-description: 多引擎共識 OCR——同一份文件平行跑多個本機引擎,對齊後用 CCT/Dawid-Skene 式估計裁決分歧,輸出共識轉錄＋各引擎分類型 competence＋低共識複核清單。當使用者說「多個模型一起辨識」「OCR 結果互相驗證」「哪個引擎在這類內容比較準」「只想人工複核有分歧的地方」時使用。純本機,文件不離機。
+description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎,對齊後用 CCT/Dawid-Skene 式估計裁決分歧,輸出共識轉錄＋各引擎分類型 competence＋低共識複核清單。當使用者說「多個模型一起辨識」「OCR 結果互相驗證」「哪個引擎在這類內容比較準」「只想人工複核有分歧的地方」時使用。純本機,文件不離機。
 ---
 
 # consensus — 多引擎共識 OCR（CCT/Dawid-Skene-lite）
@@ -27,4 +27,7 @@ description: 多引擎共識 OCR——同一份文件平行跑多個本機引擎
   `agreement` 矩陣是引擎間錯誤相關的診斷（相關性高會虛增 competence），
   MVP 只揭露不修正。
 - **表格結構不重建**：轉錄檔中表格降為逐 cell 行；表格請以報告 JSON 對照原檔。
-- competence 是「與共識一致率」（Laplace 平滑），不是對 ground truth 的正確率。
+- competence 是「與共識一致率」（Laplace 平滑），不是對 ground truth 的正確率；
+  無人 corroborate 的 solo item 與平票 item 不計入 competence。
+- 引擎**逐一**執行（本機 VLM 共享 GPU／模型伺服器，循序是刻意設計，非平行）。
+- 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點（結果仍內部一致）。

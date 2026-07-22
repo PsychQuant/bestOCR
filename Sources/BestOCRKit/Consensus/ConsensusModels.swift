@@ -65,14 +65,20 @@ public struct ConsensusEstimate: Sendable {
     /// diagnostic (engines sharing errors inflate each other's competence).
     public let agreement: [String: [String: Double]]
     public let iterations: Int
+    /// False when the iteration cap interrupted EM before the assignment and
+    /// tie set stabilized — the verdicts are still internally consistent
+    /// (competences are measured against them) but not a fixed point.
+    public let converged: Bool
 
     public init(items: [ItemConsensus], overallCompetence: [String: Double],
                 competence: [String: [ItemKind: Double]],
-                agreement: [String: [String: Double]], iterations: Int) {
+                agreement: [String: [String: Double]], iterations: Int,
+                converged: Bool) {
         self.items = items
         self.overallCompetence = overallCompetence
         self.competence = competence
         self.agreement = agreement
         self.iterations = iterations
+        self.converged = converged
     }
 }

@@ -127,16 +127,16 @@ public enum ConsensusAlignment {
 
         // Cross-merge solo items: unmatched items from DIFFERENT engines that
         // are the same content must corroborate each other, not fragment into
-        // per-engine singletons. Greedy grouping by kind + similarity; one
-        // engine contributes at most once per group.
+        // per-engine singletons. Greedy grouping by compatible kind +
+        // similarity (math compared with `$` stripped); one engine
+        // contributes at most once per group. Group kind = first exemplar's.
         var groups: [(kind: ItemKind, exemplar: ExtractedItem, responses: [String: String])] = []
         for (engine, item) in solo.sorted(by: { $0.engine < $1.engine }) {
             var placed = false
-            for g in groups.indices where groups[g].kind == item.kind
+            for g in groups.indices where kindCompatible(groups[g].kind, item.kind)
                 && groups[g].responses[engine] == nil {
-                let ex = groups[g].exemplar
-                if ex.normalized == item.normalized
-                    || similarity(ex.normalized, item.normalized) >= similarityThreshold {
+                let te = matchText(groups[g].exemplar), ti = matchText(item)
+                if te == ti || similarity(te, ti) >= similarityThreshold {
                     groups[g].responses[engine] = item.normalized
                     placed = true
                     break
@@ -193,7 +193,7 @@ public enum ConsensusAlignment {
     /// alone is strong evidence of correspondence; a heavily-garbled line
     /// then lands on the same item as its peers instead of forking off as a
     /// solo (so the majority can outvote it). Unequal gaps stay unpaired —
-    /// the positional claim is weak there. Same-kind required per pair.
+    /// the positional claim is weak there. Compatible-kind required per pair.
     private static func equalGapPairs(anchors: [(Int, Int)],
                                       spine: [ExtractedItem],
                                       other: [ExtractedItem]) -> [(Int, Int)] {
@@ -206,7 +206,7 @@ public enum ConsensusAlignment {
             if gapS > 0, gapS == gapO {
                 for t in 0..<gapS {
                     let si = prevS + 1 + t, oi = prevO + 1 + t
-                    if spine[si].kind == other[oi].kind {
+                    if kindCompatible(spine[si].kind, other[oi].kind) {
                         extra.append((si, oi))
                     }
                 }
@@ -216,10 +216,30 @@ public enum ConsensusAlignment {
         return extra
     }
 
+    /// Kind is an engine-dependent *rendering* of the same source line — a
+    /// VLM emits `$…$` (.math) where Vision emits plain text (.proseLine).
+    /// Treating kind as content identity fragments every math line into
+    /// per-engine solo items that can never be adjudicated (verify #11
+    /// finding 1). Math and prose renderings are alignable; table cells stay
+    /// structural (pipe syntax, not a rendering choice).
+    static func kindCompatible(_ a: ItemKind, _ b: ItemKind) -> Bool {
+        if a == b { return true }
+        return Set([a, b]) == Set([ItemKind.math, .proseLine])
+    }
+
+    /// Comparison key: math renderings drop their `$` delimiters so
+    /// `$E = mc^2$` and `E = mc^2` compare equal. Stored responses keep the
+    /// engine's actual rendering — this is matching-only.
+    private static func matchText(_ item: ExtractedItem) -> String {
+        guard item.kind == .math else { return item.normalized }
+        return ItemExtractor.normalize(item.normalized.replacingOccurrences(of: "$", with: ""))
+    }
+
     private static func matches(_ a: ExtractedItem, _ b: ExtractedItem) -> Bool {
-        guard a.kind == b.kind else { return false }
-        if a.normalized == b.normalized { return true }
-        return similarity(a.normalized, b.normalized) >= similarityThreshold
+        guard kindCompatible(a.kind, b.kind) else { return false }
+        let ta = matchText(a), tb = matchText(b)
+        if ta == tb { return true }
+        return similarity(ta, tb) >= similarityThreshold
     }
 
     /// 1 − normalizedLevenshtein. Exact DP — items are line/cell sized.

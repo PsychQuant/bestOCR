@@ -52,6 +52,39 @@ struct ConsensusAlignmentTests {
         #expect(solo[0].responses["B"] == "SPURIOUS")
     }
 
+    @Test func mathAndProseRenderingsOfSameLineAlign() {
+        // Verify #11 finding 1: a VLM renders math as LaTeX (`$…$` → .math)
+        // while Vision renders the same source line as plain text
+        // (.proseLine). Kind is an engine-dependent rendering artifact, not
+        // content identity — the two renderings must land on ONE item so the
+        // estimator can adjudicate, not fork into two solo items.
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "paddle": ItemExtractor.extract(page: 1, text: "$E = mc^2$"),
+            "vision": ItemExtractor.extract(page: 1, text: "E = mc^2"),
+        ])
+        #expect(aligned.count == 1, "one source line must yield one aligned item")
+        #expect(aligned.first?.responses.count == 2)
+    }
+
+    @Test func crossKindSoloRenderingsMergeIntoOneItem() {
+        // Same finding, solo-merge path: the spine (median count) lacks the
+        // math line entirely; the two engines that saw it render it as .math
+        // vs .proseLine. Their unmatched items must corroborate each other in
+        // the cross-engine solo merge, not fragment into two singletons.
+        let short = "l1\nl2"
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: short),
+            "D": ItemExtractor.extract(page: 1, text: short),
+            "E": ItemExtractor.extract(page: 1, text: short),
+            "B": ItemExtractor.extract(page: 1, text: "l1\n$x + y$\nl2"),
+            "C": ItemExtractor.extract(page: 1, text: "l1\nx + y\nl2"),
+        ])
+        #expect(aligned.count == 3, "l1, l2, and ONE merged math item")
+        let solo = aligned.filter { $0.responses.keys.contains("B") && $0.responses.keys.contains("C")
+            && $0.responses.count == 2 }
+        #expect(solo.count == 1, "B's LaTeX and C's plain rendering must share one item")
+    }
+
     @Test func spineIsMedianLineCountEngine() {
         // Degenerate engine (loop garbage → 1 line) must not become the spine.
         let a = ["l1", "l2", "l3"]

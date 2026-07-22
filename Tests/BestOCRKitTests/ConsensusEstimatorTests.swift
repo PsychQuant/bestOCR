@@ -83,6 +83,78 @@ struct ConsensusEstimatorTests {
         #expect(aCell > bCell, "A cell competence must exceed B cell competence")
     }
 
+    @Test func soloItemsDoNotInflateCompetence() {
+        // Verify #11 finding 2: a solo item's winner is trivially its own
+        // response — counting it as "correct" in the M-step lets an engine
+        // that hallucinates many uncorroborated lines outrank engines that
+        // are right on every co-answered item. Uncorroborated items carry no
+        // information about accuracy and must not enter competence.
+        var items: [AlignedItem] = []
+        for i in 0..<4 {
+            items.append(item(i, ["A": "t\(i)", "B": "t\(i)", "C": "c-wrong-\(i)"]))
+        }
+        for i in 0..<30 {
+            items.append(item(100 + i, ["C": "solo-\(i)"]))
+        }
+        let est = ConsensusEstimator.estimate(items: items)
+        let a = est.overallCompetence["A"] ?? 0
+        let c = est.overallCompetence["C"] ?? 0
+        #expect(c < a, "30 hallucinated solo lines must not outrank a 4/4-correct engine (A \(a), C \(c))")
+    }
+
+    @Test func reportedCompetenceIsConsistentWithReportedVerdicts() {
+        // Verify #11 finding 3: the published overall competence must be
+        // recomputable from the published verdicts — over non-lowConsensus
+        // items only, (matches + 1) / (n + 2) — even when the iteration cap
+        // interrupts EM mid-stride.
+        var items: [AlignedItem] = []
+        for i in 0..<6 {
+            var r = ["A": "t\(i)", "B": "t\(i)", "C": "t\(i)"]
+            if i.isMultiple(of: 2) { r["C"] = "z\(i)" }
+            items.append(item(i, r))
+        }
+        items.append(item(100, ["C": "solo"]))
+        for maxIter in [1, 2, 20] {
+            let est = ConsensusEstimator.estimate(items: items, maxIterations: maxIter)
+            let informative = est.items.filter { !$0.lowConsensus }
+            for (engine, reported) in est.overallCompetence {
+                var n = 0, correct = 0
+                for v in informative {
+                    guard let r = v.responses[engine] else { continue }
+                    n += 1
+                    if r == v.consensusText { correct += 1 }
+                }
+                let expected = Double(correct + 1) / Double(n + 2)
+                #expect(abs(reported - expected) < 1e-12,
+                        "\(engine) @maxIter=\(maxIter): reported \(reported), recomputed \(expected)")
+            }
+        }
+    }
+
+    @Test func convergedFlagReportsFixedPointVsCap() {
+        // Hitting maxIterations is not convergence — the caller must be able
+        // to tell a fixed point from a cap-interrupted run.
+        var items: [AlignedItem] = []
+        for i in 0..<3 {
+            items.append(item(i, ["A": "t\(i)", "B": "t\(i)", "C": "t\(i)"]))
+        }
+        let full = ConsensusEstimator.estimate(items: items)
+        #expect(full.converged, "unanimous fixture must reach a fixed point")
+        let capped = ConsensusEstimator.estimate(items: items, maxIterations: 1)
+        #expect(!capped.converged, "cap hit before the stability check must report converged=false")
+    }
+
+    @Test func emptyResponsesItemIsSkippedNotTrapped() {
+        // estimate() is public API — an AlignedItem with no responses must
+        // not trap in weightedWinner (ranked[0] on an empty tally).
+        let empty = AlignedItem(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                                responses: [:])
+        let real = item(1, ["A": "x", "B": "x"])
+        let est = ConsensusEstimator.estimate(items: [empty, real])
+        #expect(est.items.count == 1, "empty-response item carries no signal and is dropped")
+        #expect(est.items.first?.consensusText == "x")
+    }
+
     @Test func agreementDiagnosticIsSymmetricAndBounded() {
         // Pairwise raw agreement: A,B always agree; C never agrees with them.
         var items: [AlignedItem] = []

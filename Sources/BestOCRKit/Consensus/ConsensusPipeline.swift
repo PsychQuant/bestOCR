@@ -147,13 +147,14 @@ struct ConsensusReport: Codable {
     let skipped: [String: String]
     let itemCount: Int
     let iterations: Int
+    let converged: Bool
     let overallCompetence: [String: Double]
     let competenceByKind: [String: [String: Double]]
     let agreement: [String: [String: Double]]
     let lowConsensus: [LowConsensusItem]
 
     enum CodingKeys: String, CodingKey {
-        case engines, skipped, iterations, agreement
+        case engines, skipped, iterations, converged, agreement
         case itemCount = "item_count"
         case overallCompetence = "overall_competence"
         case competenceByKind = "competence_by_kind"
@@ -165,6 +166,7 @@ struct ConsensusReport: Codable {
         self.skipped = skipped
         self.itemCount = estimate.items.count
         self.iterations = estimate.iterations
+        self.converged = estimate.converged
         self.overallCompetence = estimate.overallCompetence
         self.competenceByKind = estimate.competence.mapValues { kinds in
             Dictionary(uniqueKeysWithValues: kinds.map { ($0.key.rawValue, $0.value) })
