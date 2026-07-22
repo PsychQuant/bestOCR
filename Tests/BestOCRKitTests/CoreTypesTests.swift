@@ -34,3 +34,10 @@ struct CoreTypesTests {
         #expect(label.contains("GB"))
     }
 }
+
+struct BestOCRVersionTests {
+    @Test func instrumentStringDerivesFromSemver() {
+        // #10: instrument 欄位曾寫死 "0.1.0-dev" 與 semver 脫鉤 — 釘住派生關係。
+        #expect(BestOCRVersion.string == "bestocr \(BestOCRVersion.semver)")
+    }
+}
