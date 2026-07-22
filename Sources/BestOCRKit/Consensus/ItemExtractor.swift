@@ -89,12 +89,12 @@ public enum ConsensusAlignment {
         guard !extractions.isEmpty else { return [] }
         let engines = extractions.keys.sorted()
 
-        // Spine = upper-median item count; ties broken by engine id.
-        let byCount = engines.sorted {
-            let (ca, cb) = (extractions[$0]!.count, extractions[$1]!.count)
-            return ca != cb ? ca < cb : $0 < $1
-        }
-        let spineEngine = byCount[byCount.count / 2]
+        // Spine = engine whose item count equals the (upper-)median count;
+        // among those, the lexicographically smallest id (deterministic and
+        // independent of who happens to sit at the median index).
+        let counts = engines.map { extractions[$0]!.count }.sorted()
+        let medianCount = counts[counts.count / 2]
+        let spineEngine = engines.filter { extractions[$0]!.count == medianCount }.min()!
         let spine = extractions[spineEngine]!
 
         // responses[spineIndex] accumulates per-engine matches.
@@ -106,7 +106,9 @@ public enum ConsensusAlignment {
 
         for engine in engines where engine != spineEngine {
             let others = extractions[engine]!
-            let matched = lcsMatch(spine: spine, other: others)
+            var matched = lcsMatch(spine: spine, other: others)
+            matched.append(contentsOf: equalGapPairs(anchors: matched,
+                                                     spine: spine, other: others))
             var used = Set<Int>()
             for (si, oi) in matched {
                 responses[si]?[engine] = others[oi].normalized
@@ -122,10 +124,32 @@ public enum ConsensusAlignment {
             out.append(AlignedItem(key: ItemKey(page: page, index: i, kind: item.kind),
                                    responses: responses[i] ?? [:]))
         }
-        var nextIndex = spine.count
+
+        // Cross-merge solo items: unmatched items from DIFFERENT engines that
+        // are the same content must corroborate each other, not fragment into
+        // per-engine singletons. Greedy grouping by kind + similarity; one
+        // engine contributes at most once per group.
+        var groups: [(kind: ItemKind, exemplar: ExtractedItem, responses: [String: String])] = []
         for (engine, item) in solo.sorted(by: { $0.engine < $1.engine }) {
-            out.append(AlignedItem(key: ItemKey(page: page, index: nextIndex, kind: item.kind),
-                                   responses: [engine: item.normalized]))
+            var placed = false
+            for g in groups.indices where groups[g].kind == item.kind
+                && groups[g].responses[engine] == nil {
+                let ex = groups[g].exemplar
+                if ex.normalized == item.normalized
+                    || similarity(ex.normalized, item.normalized) >= similarityThreshold {
+                    groups[g].responses[engine] = item.normalized
+                    placed = true
+                    break
+                }
+            }
+            if !placed {
+                groups.append((item.kind, item, [engine: item.normalized]))
+            }
+        }
+        var nextIndex = spine.count
+        for group in groups {
+            out.append(AlignedItem(key: ItemKey(page: page, index: nextIndex, kind: group.kind),
+                                   responses: group.responses))
             nextIndex += 1
         }
         return out
@@ -161,6 +185,35 @@ public enum ConsensusAlignment {
             }
         }
         return pairs
+    }
+
+    /// Positional pairing for equal-size gaps between LCS anchors — the
+    /// changed-block heuristic from diff tools. When exactly k items on both
+    /// sides sit between two consecutive anchors (or a boundary), position
+    /// alone is strong evidence of correspondence; a heavily-garbled line
+    /// then lands on the same item as its peers instead of forking off as a
+    /// solo (so the majority can outvote it). Unequal gaps stay unpaired —
+    /// the positional claim is weak there. Same-kind required per pair.
+    private static func equalGapPairs(anchors: [(Int, Int)],
+                                      spine: [ExtractedItem],
+                                      other: [ExtractedItem]) -> [(Int, Int)] {
+        var extra: [(Int, Int)] = []
+        var prevS = -1, prevO = -1
+        let boundaries = anchors + [(spine.count, other.count)]
+        for (s, o) in boundaries {
+            let gapS = s - prevS - 1
+            let gapO = o - prevO - 1
+            if gapS > 0, gapS == gapO {
+                for t in 0..<gapS {
+                    let si = prevS + 1 + t, oi = prevO + 1 + t
+                    if spine[si].kind == other[oi].kind {
+                        extra.append((si, oi))
+                    }
+                }
+            }
+            prevS = s; prevO = o
+        }
+        return extra
     }
 
     private static func matches(_ a: ExtractedItem, _ b: ExtractedItem) -> Bool {
