@@ -158,6 +158,10 @@ struct ConsensusAlignmentTests {
         // over-broad classification pollutes competence_by_kind.
         #expect(ItemExtractor.extract(page: 1, text: #"\begin{itemize}"#).first?.kind == .proseLine)
         #expect(ItemExtractor.extract(page: 1, text: #"\begin{align}"#).first?.kind == .math)
+        // Exact environment names, not prefixes; matrix family included.
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{alignment}"#).first?.kind == .proseLine)
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{matrix}"#).first?.kind == .math)
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{align*}"#).first?.kind == .math)
     }
 
     @Test func soloMergeNeedsTheSameGapInterval() {

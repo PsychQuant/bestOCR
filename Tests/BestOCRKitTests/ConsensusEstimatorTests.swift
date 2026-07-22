@@ -144,6 +144,9 @@ struct ConsensusEstimatorTests {
                 "the only real content wins; empties abstain")
         #expect(est.items.first?.lowConsensus == true,
                 "one real supporter is uncorroborated")
+        #expect(est.overallCompetence["A"] == nil && est.overallCompetence["B"] == nil,
+                "placeholder-only engines have no competence identity")
+        #expect(est.overallCompetence["C"] != nil)
     }
 
     @Test func responsesPreserveRawRendering() {

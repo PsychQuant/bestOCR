@@ -39,7 +39,12 @@ public enum ConsensusEstimator {
                                      agreement: [:], iterations: 0, converged: true)
         }
 
-        let engines = Set(items.flatMap { $0.responses.keys }).sorted()
+        // Metric identity requires at least one REAL response — an engine
+        // that only ever produced placeholders must not appear in the
+        // competence/agreement maps with prior-only values (#13 verify).
+        let engines = Set(items.flatMap { item in
+            item.responses.filter { !$0.value.canonical.isEmpty }.map(\.key)
+        }).sorted()
 
         // competence[engine][kind], only for kinds the engine actually answered.
         var perKind: [String: [ItemKind: Double]] = [:]

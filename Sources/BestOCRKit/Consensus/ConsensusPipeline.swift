@@ -169,10 +169,14 @@ public enum ConsensusPipeline {
                                      + " — engines produced disjoint or empty extractions;"
                                      + " nothing to adjudicate")
         }
-        // Overwrite is surfaced, never silent (#13 F15c).
+        // Overwrite is surfaced, never silent (#13 F15c) — replacing EITHER
+        // artifact counts (a leftover report with no markdown is still an
+        // overwrite).
         let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
-        let overwrote = FileManager.default
-            .fileExists(atPath: outDir.appendingPathComponent("\(stem).consensus.md").path)
+        let overwrote = ["md", "json"].contains { ext in
+            FileManager.default.fileExists(
+                atPath: outDir.appendingPathComponent("\(stem).consensus.\(ext)").path)
+        }
         let outputs = try writeOutputs(estimate: estimate,
                                        engines: results.keys.sorted(),
                                        skipped: skipped,

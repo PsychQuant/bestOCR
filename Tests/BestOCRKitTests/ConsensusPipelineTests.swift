@@ -18,6 +18,22 @@ private struct CloudStubEngine: OCREngine {
     }
 }
 
+/// Local family but network-reaching — the privacy gate must refuse it too.
+private struct NetworkStubEngine: OCREngine {
+    let id: String
+    let family = EngineFamily.classical
+    var capabilities: EngineCapabilities {
+        EngineCapabilities(outputLevel: .plainText, languages: ["en"],
+                           needsNetwork: true, memoryClass: .light)
+    }
+    func probe() async -> EngineAvailability { .available }
+    func recognize(_ request: OCRRequest) async throws -> OCRResult {
+        OCRResult(engineID: id, pages: [], condition: ConditionTuple(
+            model: id, quant: "n/a", dpi: request.dpi, docType: request.docType,
+            platform: "net", hardware: "test", instrument: "test"))
+    }
+}
+
 /// Stub whose recognize is "cancelled" — cancellation must propagate (#13 F11).
 private struct CancellingStubEngine: OCREngine {
     let id: String
@@ -270,6 +286,20 @@ struct ConsensusPipelineTests {
         } catch let error as OCREngineError {
             #expect(error.message.contains("reserved"))
         }
+
+        let netRegistry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "x"),
+            NetworkStubEngine(id: "remote.vlm"),
+        ])
+        do {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "remote.vlm"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out2"), registry: netRegistry, runLog: runLog)
+            Issue.record("network-reaching engine must be refused")
+        } catch let error as OCREngineError {
+            #expect(error.message.contains("network") || error.message.contains("cloud"))
+        }
     }
 
     @Test func invalidDpiIsRefused() async throws {
@@ -306,6 +336,13 @@ struct ConsensusPipelineTests {
             inputPath: img.path, engineIDs: ["A", "B"], dpi: 150, pageSpec: "",
             languages: [], docType: "test", outDir: out, registry: registry, runLog: runLog)
         #expect(second.overwrote == true)
+
+        // Report-only leftover (md removed) must still be surfaced.
+        try FileManager.default.removeItem(at: second.outputMarkdown)
+        let third = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150, pageSpec: "",
+            languages: [], docType: "test", outDir: out, registry: registry, runLog: runLog)
+        #expect(third.overwrote == true, "overwriting only the report is still overwriting")
     }
 
     @Test func reportCarriesSchemaVersionAndDecodesLegacy() throws {
@@ -316,6 +353,8 @@ struct ConsensusPipelineTests {
         ])
         let report = ConsensusReport(estimate: estimate, engines: ["A", "B"], skipped: [:])
         #expect(report.schemaVersion == 2)
+        let encoded = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
+        #expect(encoded.contains("\"schema_version\":2"), "the version must land in the JSON artifact")
         let legacy = """
         {"agreement":{},"engines":["A"],"item_count":0,"iterations":1,
          "low_consensus":[],"overall_competence":{},"competence_by_kind":{},

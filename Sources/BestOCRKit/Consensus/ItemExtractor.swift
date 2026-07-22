@@ -89,18 +89,24 @@ public enum ItemExtractor {
         }
     }
 
-    /// LaTeX environments that are actually math — a bare `\begin{` prefix
-    /// would classify itemize/document/table as math and pollute the
-    /// per-kind competence attribution (#13 verify).
-    private static let mathEnvironments = [
-        "equation", "align", "gather", "multline", "eqnarray",
+    /// LaTeX environments that are actually math — matched by EXACT name
+    /// (with an optional trailing `*` normalized away): a prefix match would
+    /// classify `\begin{alignment}` as math, and a bare `\begin{` prefix
+    /// classified itemize/document/table as math (#13 verify).
+    private static let mathEnvironments: Set<String> = [
+        "equation", "align", "flalign", "gather", "multline", "eqnarray",
         "math", "displaymath", "cases", "split", "array",
+        "matrix", "pmatrix", "bmatrix", "vmatrix", "Vmatrix", "smallmatrix",
     ]
 
     private static func isMathLine(_ line: String) -> Bool {
         if line.hasPrefix("$$") || line.hasPrefix("\\[") || line.hasPrefix("\\(") { return true }
         if line.hasPrefix("\\begin{") {
-            return mathEnvironments.contains { line.hasPrefix("\\begin{\($0)") }
+            let after = line.dropFirst("\\begin{".count)
+            guard let close = after.firstIndex(of: "}") else { return false }
+            var env = String(after[..<close])
+            if env.hasSuffix("*") { env = String(env.dropLast()) }
+            return mathEnvironments.contains(env)
         }
         return line.filter { $0 == "$" }.count >= 2
     }
@@ -226,11 +232,16 @@ public enum ConsensusAlignment {
         var out: [AlignedItem] = []
         var index = 0
         func emitGroups(anchoredAt prev: Int, wholePage: Bool = false) {
-            let picked = groups
-                .filter { $0.prev == prev
-                    && (($0.prev == -1 && $0.next == spine.count) == wholePage) }
-                .sorted { ($0.minOi, $0.exemplar.normalized) < ($1.minOi, $1.exemplar.normalized) }
-            for group in picked {
+            // Creation ordinal as the final tie-break makes this a strict
+            // total order — equal (minOi, text) pairs (e.g. incompatible
+            // kinds with identical content) must not depend on sort
+            // stability for their ItemKey.index.
+            let picked = groups.enumerated()
+                .filter { $0.element.prev == prev
+                    && (($0.element.prev == -1 && $0.element.next == spine.count) == wholePage) }
+                .sorted { ($0.element.minOi, $0.element.exemplar.normalized, $0.offset)
+                        < ($1.element.minOi, $1.element.exemplar.normalized, $1.offset) }
+            for (_, group) in picked {
                 out.append(AlignedItem(key: ItemKey(page: page, index: index, kind: group.kind),
                                        responses: group.responses))
                 index += 1

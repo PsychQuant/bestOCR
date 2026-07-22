@@ -38,7 +38,13 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
   不支援；math 偵測限 `$`/`$$`/`\(`/`\[`/常見數學 environment——bare LaTeX 指令
   與 Unicode 方程不會被分類為 math（仍以一般行參與共識）。
 - 報告 JSON `schema_version: 2` 起 `responses`／consensus 文字為各引擎**原始
-  rendering**（v1 為 normalized 文字）；空 table cell 是位置佔位，不參與投票。
+  rendering**（v1 為 normalized 文字）；空 table cell 是位置佔位，不參與投票，
+  **全空的 aligned slot 會整個省略**（`item_count` 是「至少一個真實回應的
+  verdict 數」，item index 因此可能不連續）；只出過佔位符的引擎不會出現在
+  competence／agreement。
+- Solo item 只在**完全相同的 gap 區間**內跨引擎合併（保守政策：錯拆送人工
+  複核是安全的，錯併製造假 corroboration 是危險的）——引擎各漏不同中段行時，
+  相同內容可能拆成兩個低共識 item。
 - 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點；competence 仍是對
   已發布 verdict 的一致率（內部一致），而在發布 competence 下不再是贏家的
   verdict 會被強制標為低共識送人工複核。
