@@ -9,7 +9,9 @@ pre-registered benchmark, never to vibes.
 of 11 engines (Apple Vision, tesseract, rapidocr/cnocr/surya via protocol-v1
 Python adapters, Ollama VLMs, and Claude/OpenAI/Gemini cloud *reference*
 engines); `bestocr recommend` returns an evidence-labelled answer — a
-tier-named ranking when measured rows exist in `evidence/rows.jsonl`,
+tier-named ranking when measured rows exist (repo `evidence/rows.jsonl`,
+or `~/.bestocr/evidence.jsonl` auto-fetched by the plugin wrapper for
+installed users),
 otherwise an honest *evidence-pending* capability filter (cloud engines are
 never ranked). `bestocr compare` runs a local engine against a cloud
 reference with a named metric (`quality.token_recall_vs_cloud@v1` — not
