@@ -24,6 +24,25 @@
   脫離恆 evidence-pending。實測:raw 抓取 20 rows OK。
 - 更新頻率綁 binary 下載事件為 v1 取捨(residue 記錄)。
 
+## 信任邊界揭露(#9,刻意決定)
+
+- evidence 抓取來源是 **mutable `main`**(raw.githubusercontent),與 #8 的
+  release-tag + sha256 binary 路徑是不同信任邊界——刻意取捨:evidence 持續
+  累積、與 release 解耦;rows 只被用於字串比對排名(無 code/path 消費面),
+  最壞情況是排名被操縱,非執行面風險(verify DA 溯源確認)。
+
+## Verify R2 修正(6-AI batch verify 後 fix-forward)
+
+- **#8**:sidecar 404 body "Not Found" 非空 → 誤判已取得 hash → 必然
+  mismatch 假陽性(fresh install 直接失敗)——加 `^[0-9a-f]{64}$` regex gate
+  (兩個 GitHub domain 的 404 body 皆實測)。
+- **#9**:ingest write-path 與 read 鏈解耦(`ingestTargetURL`,無 existence
+  gate——CWD 檔暫缺時不再靜默寫到 ~/.bestocr;TDD 2 測試);wrapper evidence
+  refresh 收斂單一成功鏈(成功訊息只在真成功、防 target 為目錄的 mv 陷阱)。
+- 已知限制(記錄):evidence 檔若落地後損壞,load 依設計 loudly fail,
+  自我修復要等下次版本變動的 refresh 或手動刪檔——與 refresh 頻率同屬
+  residue,實用中踩到再升級。
+
 ## 後續
 
 - 批次 verify 後發 **v0.6.2 binary release + plugin 同號 bump**(使用者拍板)

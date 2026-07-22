@@ -26,7 +26,7 @@ struct Evidence: AsyncParsableCommand {
             guard !rows.isEmpty else {
                 throw ValidationError("entry \(entry.id) has no pages — nothing to ingest")
             }
-            let target = EvidenceStore.defaultURL()
+            let target = EvidenceStore.ingestTargetURL()
             try EvidenceIngest.append(rows, to: target)
             print("ingested \(rows.count) row(s) from runlog entry \(entry.id):")
             for row in rows {

@@ -114,7 +114,11 @@ if $NEED_DOWNLOAD; then
             # availability wins over strictness for transient network errors,
             # and the mismatch case is the actual attack/corruption signal.
             EXPECTED_HASH=$(curl -sL --max-time 30 "${URL}.sha256" 2>/dev/null | tr -d '[:space:]')
-            if [[ -n "$EXPECTED_HASH" ]]; then
+            # A missing asset returns body "Not Found" (non-empty!) — only a
+            # well-formed 64-hex string counts as a fetched hash; anything else
+            # takes the warn-and-proceed path instead of a guaranteed-mismatch
+            # false positive that would brick fresh installs (#8 R2).
+            if [[ "$EXPECTED_HASH" =~ ^[0-9a-f]{64}$ ]]; then
                 ACTUAL_HASH=$(shasum -a 256 "$DL_TMP" | awk '{print $1}')
                 if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
                     rm -f "$DL_TMP"
@@ -153,13 +157,20 @@ if $NEED_DOWNLOAD; then
             # refresh cadence is a documented residue). First-char sanity check
             # keeps an HTML error page from landing as "evidence" — the store
             # loads malformed rows loudly, which would break recommend.
+            # Single success chain (#9 R2): the success message prints only
+            # when every step actually succeeded — curl, JSON sanity, mkdir,
+            # not-a-directory guard (a pre-existing DIR at the target would make
+            # mv "succeed" into it and later crash the store on a dir path),
+            # and the mv itself. Any failure → clean up, stay silent, binary
+            # startup is never blocked (no set -e in this script by design).
             EV_TMP=$(mktemp "${INSTALL_DIR}/evidence.XXXXXX")
             if curl -sL --max-time 30 \
                  "https://raw.githubusercontent.com/$REPO/main/evidence/rows.jsonl" \
                  -o "$EV_TMP" 2>/dev/null \
-               && [[ -s "$EV_TMP" && "$(head -c1 "$EV_TMP")" == "{" ]]; then
-                mkdir -p "$HOME/.bestocr"
-                mv "$EV_TMP" "$HOME/.bestocr/evidence.jsonl"
+               && [[ -s "$EV_TMP" && "$(head -c1 "$EV_TMP")" == "{" ]] \
+               && mkdir -p "$HOME/.bestocr" 2>/dev/null \
+               && [[ ! -d "$HOME/.bestocr/evidence.jsonl" ]] \
+               && mv "$EV_TMP" "$HOME/.bestocr/evidence.jsonl" 2>/dev/null; then
                 echo "$BINARY_NAME: refreshed evidence rows → ~/.bestocr/evidence.jsonl" >&2
             else
                 rm -f "$EV_TMP" 2>/dev/null

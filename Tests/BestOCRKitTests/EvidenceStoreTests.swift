@@ -80,3 +80,21 @@ struct EvidenceStoreResolutionTests {
         #expect(url.path == "/Users/fake-home/.bestocr/evidence.jsonl")
     }
 }
+
+struct EvidenceIngestTargetTests {
+    // #9 R2(verify reqlogic HIGH):ingest 是「寫入」——不得沿用 read 鏈的
+    // existence gate,否則 CWD 檔暫缺時會靜默寫到 ~/.bestocr(不進 git)。
+    @Test func ingestTargetIgnoresExistenceAndStaysInCwd() {
+        let cwd = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ingest-\(UUID().uuidString)")   // 無 evidence/ 檔
+        let url = EvidenceStore.ingestTargetURL(environment: [:], cwd: cwd)
+        #expect(url.path == cwd.appendingPathComponent("evidence/rows.jsonl").path)
+    }
+
+    @Test func ingestTargetHonoursEnvOverride() {
+        let url = EvidenceStore.ingestTargetURL(
+            environment: ["BESTOCR_EVIDENCE": "/tmp/w.jsonl"],
+            cwd: URL(fileURLWithPath: "/x"))
+        #expect(url.path == "/tmp/w.jsonl")
+    }
+}

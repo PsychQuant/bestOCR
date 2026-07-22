@@ -39,6 +39,23 @@ public struct EvidenceStore: Sendable {
                     home: FileManager.default.homeDirectoryForCurrentUser)
     }
 
+    /// WRITE-target resolution for `evidence ingest` (#9 R2): env override,
+    /// else the repo-layout path under CWD — UNCONDITIONALLY. The read chain's
+    /// existence gate must not apply to writes: a missing rows.jsonl is the
+    /// normal first-ingest state, and gating on it would silently divert the
+    /// write to the per-user fallback (outside git, invisible to `git status`).
+    public static func ingestTargetURL() -> URL {
+        ingestTargetURL(environment: ProcessInfo.processInfo.environment,
+                        cwd: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    }
+
+    static func ingestTargetURL(environment: [String: String], cwd: URL) -> URL {
+        if let override = environment["BESTOCR_EVIDENCE"] {
+            return URL(fileURLWithPath: override)
+        }
+        return cwd.appendingPathComponent("evidence/rows.jsonl")
+    }
+
     /// Injectable resolution core (tests exercise the chain without touching
     /// process-global CWD/home state).
     static func resolvedURL(environment: [String: String], cwd: URL, home: URL) -> URL {
