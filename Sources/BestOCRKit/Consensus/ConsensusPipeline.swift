@@ -66,7 +66,7 @@ public enum ConsensusPipeline {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
-        try encoder.encode(report).write(to: jsonURL)
+        try encoder.encode(report).write(to: jsonURL, options: .atomic)
         return (mdURL, jsonURL)
     }
 
@@ -81,10 +81,23 @@ public enum ConsensusPipeline {
                                runLog: RunLog) async throws -> ConsensusRunSummary {
         var skipped: [String: String] = [:]
         var candidates: [any OCREngine] = []
+        var seen = Set<String>()
         for id in engineIDs {
+            // A duplicate id is the same informant — dedupe (order-preserving)
+            // so the ≥2 floor counts informants, not list entries.
+            guard seen.insert(id).inserted else { continue }
             guard let engine = registry.engine(id: id) else {
                 skipped[id] = "unknown engine id"
                 continue
+            }
+            // Privacy contract: consensus is local-only (SKILL: 文件不離機;
+            // MCP openWorldHint: false). An explicit cloud id is refused
+            // loudly, never silently honored.
+            if engine.family == .cloudReference {
+                throw OCREngineError(engine: "consensus",
+                                     message: "cloud engine '\(id)' is not allowed in consensus"
+                                         + " (local-only privacy contract) — use `bestocr compare`"
+                                         + " for cloud-reference runs")
             }
             if case .unavailable(let reason, _) = await engine.probe() {
                 skipped[id] = "unavailable: \(reason)"
@@ -109,6 +122,10 @@ public enum ConsensusPipeline {
         for engine in candidates {
             do {
                 results[engine.id] = try await engine.recognize(request)
+            } catch is CancellationError {
+                // A cancelled job must stop, not keep running the remaining
+                // engines and write outputs.
+                throw CancellationError()
             } catch let error as OCREngineError {
                 skipped[engine.id] = error.errorDescription ?? error.message
             } catch {
@@ -122,6 +139,16 @@ public enum ConsensusPipeline {
         }
 
         let estimate = adjudicate(results: results)
+        // Two OCRResults are not two effective informants: without a single
+        // co-answered item (disjoint pages, empty outputs, nothing alignable)
+        // there is no consensus to report.
+        guard estimate.items.contains(where: { $0.responses.count >= 2 }) else {
+            throw OCREngineError(engine: "consensus",
+                                 message: "no co-answered items across "
+                                     + results.keys.sorted().joined(separator: ", ")
+                                     + " — engines produced disjoint or empty extractions;"
+                                     + " nothing to adjudicate")
+        }
         let outputs = try writeOutputs(estimate: estimate,
                                        engines: results.keys.sorted(),
                                        skipped: skipped,
@@ -165,6 +192,13 @@ struct ConsensusReport: Codable {
     let itemCount: Int
     let iterations: Int
     let converged: Bool
+    /// Share of items with ≥2 responses — the honest coverage number: how
+    /// much of the transcript is actually corroborated vs single-engine.
+    let coAnswerShare: Double
+    /// Engines that produced output but zero alignable items — they appear
+    /// in `engines` yet are absent from the competence maps; called out
+    /// instead of silently missing.
+    let enginesWithoutAlignedItems: [String]
     let overallCompetence: [String: Double]
     let competenceByKind: [String: [String: Double]]
     let agreement: [String: [String: Double]]
@@ -173,9 +207,29 @@ struct ConsensusReport: Codable {
     enum CodingKeys: String, CodingKey {
         case engines, skipped, iterations, converged, agreement
         case itemCount = "item_count"
+        case coAnswerShare = "co_answer_share"
+        case enginesWithoutAlignedItems = "engines_without_aligned_items"
         case overallCompetence = "overall_competence"
         case competenceByKind = "competence_by_kind"
         case lowConsensus = "low_consensus"
+    }
+
+    /// Custom decode: fields added after the first release default instead
+    /// of failing on old report files (`converged` → false, coverage → 0/[]).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.engines = try c.decode([String].self, forKey: .engines)
+        self.skipped = try c.decode([String: String].self, forKey: .skipped)
+        self.itemCount = try c.decode(Int.self, forKey: .itemCount)
+        self.iterations = try c.decode(Int.self, forKey: .iterations)
+        self.converged = try c.decodeIfPresent(Bool.self, forKey: .converged) ?? false
+        self.coAnswerShare = try c.decodeIfPresent(Double.self, forKey: .coAnswerShare) ?? 0
+        self.enginesWithoutAlignedItems =
+            try c.decodeIfPresent([String].self, forKey: .enginesWithoutAlignedItems) ?? []
+        self.overallCompetence = try c.decode([String: Double].self, forKey: .overallCompetence)
+        self.competenceByKind = try c.decode([String: [String: Double]].self, forKey: .competenceByKind)
+        self.agreement = try c.decode([String: [String: Double]].self, forKey: .agreement)
+        self.lowConsensus = try c.decode([LowConsensusItem].self, forKey: .lowConsensus)
     }
 
     init(estimate: ConsensusEstimate, engines: [String], skipped: [String: String]) {
@@ -184,6 +238,12 @@ struct ConsensusReport: Codable {
         self.itemCount = estimate.items.count
         self.iterations = estimate.iterations
         self.converged = estimate.converged
+        self.coAnswerShare = estimate.items.isEmpty ? 0
+            : Double(estimate.items.filter { $0.responses.count >= 2 }.count)
+                / Double(estimate.items.count)
+        self.enginesWithoutAlignedItems = engines.filter { engine in
+            !estimate.items.contains { $0.responses.keys.contains(engine) }
+        }.sorted()
         self.overallCompetence = estimate.overallCompetence
         self.competenceByKind = estimate.competence.mapValues { kinds in
             Dictionary(uniqueKeysWithValues: kinds.map { ($0.key.rawValue, $0.value) })

@@ -2,8 +2,49 @@ import Foundation
 import Testing
 @testable import BestOCRKit
 
+/// Cloud-flavored stub for the privacy-contract test (#13 F8).
+private struct CloudStubEngine: OCREngine {
+    let id: String
+    let family = EngineFamily.cloudReference
+    var capabilities: EngineCapabilities {
+        EngineCapabilities(outputLevel: .plainText, languages: ["en"],
+                           needsNetwork: true, memoryClass: .light)
+    }
+    func probe() async -> EngineAvailability { .available }
+    func recognize(_ request: OCRRequest) async throws -> OCRResult {
+        OCRResult(engineID: id, pages: [], condition: ConditionTuple(
+            model: id, quant: "n/a", dpi: request.dpi, docType: request.docType,
+            platform: "cloud", hardware: "test", instrument: "test"))
+    }
+}
+
+/// Stub whose recognize is "cancelled" — cancellation must propagate (#13 F11).
+private struct CancellingStubEngine: OCREngine {
+    let id: String
+    let family = EngineFamily.classical
+    var capabilities: EngineCapabilities {
+        EngineCapabilities(outputLevel: .plainText, languages: ["en"],
+                           needsNetwork: false, memoryClass: .light)
+    }
+    func probe() async -> EngineAvailability { .available }
+    func recognize(_ request: OCRRequest) async throws -> OCRResult {
+        throw CancellationError()
+    }
+}
+
 /// ConsensusPipeline (#11): pure adjudication core + output writer.
 struct ConsensusPipelineTests {
+
+    private func fixtureSetup() throws -> (tmp: URL, img: URL, runLog: RunLog) {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("consensus-t-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==")!
+        let img = tmp.appendingPathComponent("fixture.png")
+        try png.write(to: img)
+        return (tmp, img, RunLog(fileURL: tmp.appendingPathComponent("runlog.jsonl")))
+    }
 
     private func result(_ engine: String, _ text: String) -> OCRResult {
         OCRResult(engineID: engine,
@@ -89,6 +130,120 @@ struct ConsensusPipelineTests {
         let log = try String(contentsOf: runLog.fileURL, encoding: .utf8)
         #expect(log.contains("\"engineID\":\"consensus\""))
         #expect(log.contains(summary.runID))
+    }
+
+    @Test func explicitCloudEngineIsRefused() async throws {
+        // #13 F8: SKILL says 純本機、文件不離機 and MCP declares
+        // openWorldHint:false — an explicit cloud engine id must be refused
+        // loudly, not silently honored.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello"),
+            CloudStubEngine(id: "cloud.stub"),
+        ])
+        await #expect(throws: OCREngineError.self) {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "cloud.stub"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry,
+                runLog: runLog)
+        }
+    }
+
+    @Test func cancellationPropagatesInsteadOfBeingSwallowed() async throws {
+        // #13 F11: CancellationError must rethrow — a cancelled job must not
+        // keep running remaining engines and write outputs.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello"),
+            CancellingStubEngine(id: "B"),
+        ])
+        await #expect(throws: CancellationError.self) {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry,
+                runLog: runLog)
+        }
+    }
+
+    @Test func duplicateEngineIDsAreDeduplicatedBeforeTheFloor() async throws {
+        // #13 F12: "A,A" is one informant, not two — the ≥2 floor must see 1
+        // (first guard, accurate message) instead of double-probing and only
+        // failing at the produced-output guard with a misleading message.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello"),
+        ])
+        do {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "A"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry,
+                runLog: runLog)
+            Issue.record("expected the ≥2-engines floor to fire")
+        } catch let error as OCREngineError {
+            #expect(error.message.contains("needs ≥2"),
+                    "dedupe must happen before the floor (got: \(error.message))")
+        }
+    }
+
+    @Test func zeroCoAnswerIsRefusedNotReportedAsConsensus() async throws {
+        // #13 F7: two OCRResults ≠ two effective informants. If no aligned
+        // item has ≥2 responses there is no consensus to report.
+        let (tmp, img, runLog) = try fixtureSetup()
+        // Unequal item counts + zero similarity: no LCS anchor, no equal-gap
+        // positional pair (that heuristic deliberately marries equal-length
+        // garble), so nothing is co-answered.
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "aaaaaaaa"),
+            StubEngine(id: "B", availability: .available, text: "z1\nz2\nz3"),
+        ])
+        await #expect(throws: OCREngineError.self) {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry,
+                runLog: runLog)
+        }
+    }
+
+    @Test func reportCarriesCoAnswerShareAndSilentEngines() async throws {
+        // #13 F7/F15: co_answer_share is the honest coverage number; an
+        // engine that produced output but zero alignable items must be
+        // called out, not silently absent from the competence maps.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello world"),
+            StubEngine(id: "B", availability: .available, text: "hello world"),
+            StubEngine(id: "C", availability: .available, text: ""),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B", "C"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        let data = try Data(contentsOf: summary.outputReport)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect((json?["co_answer_share"] as? Double ?? 0) > 0.99)
+        #expect(json?["engines_without_aligned_items"] as? [String] == ["C"])
+    }
+
+    @Test func registryHasNoEngineNamedConsensus() {
+        // #13: "consensus" is the reserved runlog marker (RunLog.swift) that
+        // EvidenceIngest branches on — no real engine may ever claim it.
+        #expect(!EngineRegistry.standard().engines.map(\.id).contains("consensus"))
+    }
+
+    @Test func oldReportJSONWithoutConvergedStillDecodes() throws {
+        // #13: pre-converged-field reports must keep decoding (default false).
+        let old = """
+        {"agreement":{},"engines":["A"],"item_count":0,"iterations":1,
+         "low_consensus":[],"overall_competence":{},"competence_by_kind":{},
+         "skipped":{},"co_answer_share":0,"engines_without_aligned_items":[]}
+        """
+        let report = try JSONDecoder().decode(ConsensusReport.self, from: Data(old.utf8))
+        #expect(report.converged == false)
     }
 
     @Test func writeOutputsProducesTranscriptAndReport() throws {
