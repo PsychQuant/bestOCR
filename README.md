@@ -92,18 +92,34 @@ docs/
   migration-2026-07-18.md   how and why measureOCR moved here
 ```
 
-## Usage (M1)
+## CLI install
 
 ```bash
-swift build -c release
-.build/release/bestocr list-engines             # probe table + install hints
-.build/release/bestocr run paper.pdf --doc-type math_pdf --math   # auto-routed
-.build/release/bestocr run page.png --engine vision --doc-type screenshot
-.build/release/bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
+# Option A — notarized release binary (no Swift toolchain needed; arm64,
+# Developer ID signed + Apple notarized so Gatekeeper is happy)
+mkdir -p ~/bin
+curl -sL -o ~/bin/bestocr \
+  https://github.com/PsychQuant/bestOCR/releases/latest/download/bestocr
+chmod +x ~/bin/bestocr
+# verify against the .sha256 sidecar published with every release:
+curl -sL https://github.com/PsychQuant/bestOCR/releases/latest/download/bestocr.sha256
+shasum -a 256 ~/bin/bestocr
+
+# Option B — build from source
+swift build -c release   # binary at .build/release/bestocr
+```
+
+## Usage
+
+```bash
+bestocr list-engines                            # probe table + install hints
+bestocr run paper.pdf --doc-type math_pdf --math   # auto-routed
+bestocr run page.png --engine vision --doc-type screenshot
+bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/
-.build/release/bestocr recommend --doc-type math_pdf --math --priority quality
-.build/release/bestocr compare page.png --engine vision --vs cloud.claude
-.build/release/bestocr evidence ingest <run-id>     # runlog → T2 rows (explicit gate)
+bestocr recommend --doc-type math_pdf --math --priority quality
+bestocr compare page.png --engine vision --vs cloud.claude
+bestocr evidence ingest <run-id>                # runlog → T2 rows (explicit gate)
 ```
 
 Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
