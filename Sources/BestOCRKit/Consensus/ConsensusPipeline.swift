@@ -29,11 +29,14 @@ public enum ConsensusPipeline {
         var allItems: [AlignedItem] = []
         for page in pages.sorted() {
             var extractions: [String: [ExtractedItem]] = [:]
+            var degenerate: Set<String> = []
             for (engine, result) in results {
                 guard let pageResult = result.pages.first(where: { $0.page == page }) else { continue }
                 extractions[engine] = ItemExtractor.extract(page: page, text: pageResult.text)
+                if pageResult.degenerateFlagged { degenerate.insert(engine) }
             }
-            allItems.append(contentsOf: ConsensusAlignment.align(page: page, extractions: extractions))
+            allItems.append(contentsOf: ConsensusAlignment.align(page: page, extractions: extractions,
+                                                                 degenerate: degenerate))
         }
         return ConsensusEstimator.estimate(items: allItems)
     }

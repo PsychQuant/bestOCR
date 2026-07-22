@@ -144,6 +144,53 @@ struct ConsensusAlignmentTests {
         #expect(mergedKind(mathEngine: "C", proseEngine: "B") == .math)
     }
 
+    @Test func degenerateFlaggedEngineNeverDefinesTheSpine() {
+        // #13 F4: a self-repetition loop has HIGH item count — upper-median
+        // alone hands it the spine in the 2-engine case. The engine's own
+        // degenerate flag must veto spine candidacy.
+        let loop = Array(repeating: "loop garbage line", count: 40)
+        let real = ["real one", "real two", "real three"]
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": real.map { ExtractedItem(kind: .proseLine, text: $0, normalized: ItemExtractor.normalize($0)) },
+            "C": loop.map { ExtractedItem(kind: .proseLine, text: $0, normalized: ItemExtractor.normalize($0)) },
+        ], degenerate: ["C"])
+        #expect(aligned.first?.responses.keys.contains("A") == true,
+                "spine index 0 must come from the non-degenerate engine")
+    }
+
+    @Test func separatorNeedsThreeDashesRealDataRowsSurvive() {
+        // #13 F13: `| - | - |` is DATA; only `---`-style cells are separators.
+        let kept = ItemExtractor.extract(page: 1, text: "| - | - |")
+        #expect(kept.count == 2, "single-dash cells are data, not a separator row")
+        let dropped = ItemExtractor.extract(page: 1, text: "| --- | :---: |")
+        #expect(dropped.isEmpty, "canonical markdown separator row is dropped")
+    }
+
+    @Test func emptyTableCellsKeepTheirColumnPosition() {
+        // #13 F13: `| A || C |` has three columns — dropping the empty one
+        // shifts every later column and misaligns cells across engines.
+        let cells = ItemExtractor.extract(page: 1, text: "| A || C |")
+        #expect(cells.count == 3)
+        #expect(cells[1].normalized.isEmpty)
+    }
+
+    @Test func mathHeuristicCoversParenAndEnvironmentForms() {
+        // #13 F14: \( … \) and \begin{equation} are math renderings too.
+        #expect(ItemExtractor.extract(page: 1, text: #"\(x + y\)"#).first?.kind == .math)
+        #expect(ItemExtractor.extract(page: 1, text: #"\begin{equation}"#).first?.kind == .math)
+    }
+
+    @Test func extractionCapsBoundDegenerateInput() {
+        // #13 F9: unbounded LCS×Levenshtein over loop garbage is a CPU/OOM
+        // hazard — item count and line length are capped (documented).
+        let hugeLine = String(repeating: "x", count: 10_000)
+        let one = ItemExtractor.extract(page: 1, text: hugeLine)
+        #expect((one.first?.normalized.count ?? 0) <= 4000)
+        let manyLines = Array(repeating: "line", count: 2_500).joined(separator: "\n")
+        let items = ItemExtractor.extract(page: 1, text: manyLines)
+        #expect(items.count <= 2000)
+    }
+
     @Test func spineIsMedianLineCountEngine() {
         // Degenerate engine (loop garbage → 1 line) must not become the spine.
         let a = ["l1", "l2", "l3"]

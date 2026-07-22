@@ -229,6 +229,26 @@ struct ConsensusPipelineTests {
         #expect(json?["engines_without_aligned_items"] as? [String] == ["C"])
     }
 
+    @Test func adjudicatePassesDegenerateFlagsToAlignment() {
+        // #13 F4 wiring: the page-level degenerate flag must reach spine
+        // selection — a flagged loop engine's 30 lines must not define the
+        // item universe over a clean 2-line engine.
+        let loopText = Array(repeating: "loop", count: 30).joined(separator: "\n")
+        let loopResult = OCRResult(
+            engineID: "C",
+            pages: [PageResult(page: 1, text: loopText, seconds: 0.1,
+                               thermalState: "nominal", degenerateFlagged: true)],
+            condition: ConditionTuple(model: "C", quant: "n/a", dpi: 150,
+                                      docType: "test", platform: "test",
+                                      hardware: "test", instrument: "test"))
+        let est = ConsensusPipeline.adjudicate(results: [
+            "A": result("A", "one\ntwo"),
+            "C": loopResult,
+        ])
+        #expect(est.items.first?.responses.keys.contains("A") == true,
+                "clean engine defines the spine when the other is degenerate-flagged")
+    }
+
     @Test func registryHasNoEngineNamedConsensus() {
         // #13: "consensus" is the reserved runlog marker (RunLog.swift) that
         // EvidenceIngest branches on — no real engine may ever claim it.

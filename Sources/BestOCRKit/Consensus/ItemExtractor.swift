@@ -21,13 +21,24 @@ public enum ItemExtractor {
     public static func extract(page: Int, text: String) -> [ExtractedItem] {
         var items: [ExtractedItem] = []
         for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            // Resource caps (#13 F9): alignment is LCS×Levenshtein — loop
+            // garbage (thousands of lines, multi-KB lines) must be bounded.
+            // Truncation, not silence: the caps are named constants and
+            // documented in the skill's honest limits.
+            if items.count >= ConsensusAlignment.maxItemsPerPage { break }
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.count > ConsensusAlignment.maxLineLength {
+                line = String(line.prefix(ConsensusAlignment.maxLineLength))
+            }
             guard !line.isEmpty, line != "---" else { continue }
 
             if isTableRow(line) {
                 let cells = tableCells(line)
                 if isSeparatorRow(cells) { continue }
-                for cell in cells where !cell.isEmpty {
+                // Empty cells stay as placeholder items (#13 F13): dropping
+                // them shifts every later column and misaligns cells across
+                // engines. An empty cell is a positional fact.
+                for cell in cells {
                     items.append(ExtractedItem(kind: .tableCell, text: cell,
                                                normalized: normalize(cell)))
                 }
@@ -64,14 +75,20 @@ public enum ItemExtractor {
         return cells
     }
 
+    /// Markdown separator cells are `---` (≥3 dashes, optional `:` ends);
+    /// a lone `-` or `:` is DATA (#13 F13) — dropping it loses a real row.
     private static func isSeparatorRow(_ cells: [String]) -> Bool {
         !cells.isEmpty && cells.allSatisfy { cell in
-            !cell.isEmpty && cell.allSatisfy { $0 == "-" || $0 == ":" }
+            var body = Substring(cell)
+            if body.hasPrefix(":") { body = body.dropFirst() }
+            if body.hasSuffix(":") { body = body.dropLast() }
+            return body.count >= 3 && body.allSatisfy { $0 == "-" }
         }
     }
 
     private static func isMathLine(_ line: String) -> Bool {
-        if line.hasPrefix("$$") || line.hasPrefix("\\[") { return true }
+        if line.hasPrefix("$$") || line.hasPrefix("\\[")
+            || line.hasPrefix("\\(") || line.hasPrefix("\\begin{") { return true }
         return line.filter { $0 == "$" }.count >= 2
     }
 
@@ -110,17 +127,29 @@ public enum ConsensusAlignment {
     /// Content-evidence floor for CROSS-kind equal-gap pairs (same-kind pairs
     /// keep position-only trust so garbled lines still land together).
     static let crossKindGapSimilarityFloor = 0.3
+    /// Resource caps (#13 F9): LCS×Levenshtein over degenerate OCR output is
+    /// a CPU/OOM hazard. Documented in the skill's honest limits.
+    static let maxItemsPerPage = 2000
+    static let maxLineLength = 4000
 
-    public static func align(page: Int, extractions: [String: [ExtractedItem]]) -> [AlignedItem] {
+    public static func align(page: Int, extractions: [String: [ExtractedItem]],
+                             degenerate: Set<String> = []) -> [AlignedItem] {
         guard !extractions.isEmpty else { return [] }
         let engines = extractions.keys.sorted()
 
         // Spine = engine whose item count equals the (upper-)median count;
         // among those, the lexicographically smallest id (deterministic and
         // independent of who happens to sit at the median index).
-        let counts = engines.map { extractions[$0]!.count }.sorted()
+        // Degenerate-flagged engines are vetoed from spine candidacy first
+        // (#13 F4): a self-repetition loop has HIGH count, so upper-median
+        // alone would hand it the spine in the 2-engine case — the engine's
+        // own flag is the content signal count cannot provide. If every
+        // engine is flagged, fall back to the full pool.
+        let vetoed = engines.filter { !degenerate.contains($0) }
+        let pool = vetoed.isEmpty ? engines : vetoed
+        let counts = pool.map { extractions[$0]!.count }.sorted()
         let medianCount = counts[counts.count / 2]
-        let spineEngine = engines.filter { extractions[$0]!.count == medianCount }.min()!
+        let spineEngine = pool.filter { extractions[$0]!.count == medianCount }.min()!
         let spine = extractions[spineEngine]!
 
         // responses[spineIndex] accumulates per-engine matches.
@@ -280,10 +309,16 @@ public enum ConsensusAlignment {
     }
 
     /// 1 − normalizedLevenshtein. Exact DP — items are line/cell sized.
+    /// Length-ratio fast reject (#13 F9): true similarity is bounded above
+    /// by min/max length, so a ratio below the lowest threshold in use
+    /// (crossKindGapSimilarityFloor) can return 0 without running the DP —
+    /// exact w.r.t. every caller's threshold comparison.
     static func similarity(_ a: String, _ b: String) -> Double {
         if a == b { return 1 }
         let ca = Array(a), cb = Array(b)
         if ca.isEmpty || cb.isEmpty { return 0 }
+        let ratio = Double(min(ca.count, cb.count)) / Double(max(ca.count, cb.count))
+        if ratio < crossKindGapSimilarityFloor { return 0 }
         var prev = Array(0...cb.count)
         var curr = Array(repeating: 0, count: cb.count + 1)
         for i in 1...ca.count {
