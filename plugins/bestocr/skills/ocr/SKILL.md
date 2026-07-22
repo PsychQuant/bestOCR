@@ -12,7 +12,7 @@ description: 把任意 PDF 或圖片轉成 Markdown——bestOCR 依測量證據
 1. **確認輸入**:絕對路徑的 PDF 或圖片(png/jpg/jpeg/tiff/heic/bmp)。沒給就問。
 2. **判斷 doc-type**(進 condition tuple,將來可 ingest 成證據):
    - 數學/學術 PDF → `math_pdf`(並考慮 `math: true`)
-   - 掃描書/檔案 → `scanned_book`;截圖 → `screenshot`;其他 → 問或 `unspecified`
+   - 掃描書/檔案 → `scanned_doc`;截圖 → `screenshot`;其他 → 問或 `unspecified`
 3. **呼叫**(擇一):
    - MCP tool `ocr`:`{input_path, doc_type, priority?, math?, lang?}` — 不給 `engine` 就是 auto routing。多頁長文件加 `async: true`,再用 `ocr_status`/`ocr_result` 輪詢。
    - CLI:`bestocr run <input> --doc-type <type> [--priority quality|speed] [--math] [--lang zh-Hant,en] [--out DIR]`
@@ -22,9 +22,10 @@ description: 把任意 PDF 或圖片轉成 Markdown——bestOCR 依測量證據
 ## 路徑安全
 
 - 優先走 MCP `ocr` tool 的 `input_path` 參數(JSON 傳值,不經 shell 解析)。
-- 組 CLI 指令時雙引號只擋空白/中文/括號,**擋不住** `$( )`、反引號、`"`、
-  換行等——檔名含這類字元時改用安全傳遞(避免把 raw 檔名內插進 shell
-  字串),或先改名再處理。
+- 組 CLI 指令時,危險在**把 raw 檔名直接內插進會被 shell 解析的 command
+  字串**——內插的 `$( )`/反引號/`"` 會被執行或破壞語法;安全作法是經變數
+  傳遞(`"$input"` 的展開不會再觸發 command substitution)或 argv 介面。
+- 檔名以 `-` 開頭時用絕對路徑(或 CLI 支援的 `--`);無法安全傳遞就先改名。
 
 ## 引擎備忘
 

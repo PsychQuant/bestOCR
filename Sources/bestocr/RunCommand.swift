@@ -25,7 +25,7 @@ struct Run: AsyncParsableCommand {
     var lang: String = ""
 
     @Option(name: .customLong("doc-type"),
-            help: "Workload label recorded in the condition tuple (e.g. math_pdf, scanned_book, screenshot).")
+            help: "Workload label recorded in the condition tuple (e.g. math_pdf, scanned_doc, screenshot).")
     var docType: String = "unspecified"
 
     @Option(help: "auto mode: quality | speed | balanced routing priority.")

@@ -1,7 +1,7 @@
 {
   "name": "bestocr",
   "version": "0.6.1",
-  "description": "bestOCR for agents: the bestocr-mcp MCP server (evidence-based multi-engine OCR — ocr with auto routing + fallback chain, recommend/list_engines/list_models, ocr_status/ocr_result async polling; notarized binary auto-downloaded on install) plus workflow skills (ocr — any PDF/image → Markdown; ocr-to — OCR → docx via the macdoc CLI, math stays literal LaTeX; compare — local vs cloud reference; evidence-ingest — runlog → T2 gate). Recommendations are evidence-labelled, never guesses.",
+  "description": "bestOCR for agents: the bestocr-mcp MCP server (evidence-based multi-engine OCR — ocr with auto routing + fallback chain, recommend/list_engines/list_models, ocr_status/ocr_result async polling; notarized binary auto-downloaded on install) plus workflow skills (ocr — any PDF/image → Markdown; ocr-to — OCR → docx, math → native OMath via pandoc when available (macdoc otherwise); compare — local vs cloud reference; evidence-ingest — runlog → T2 gate). Recommendations are evidence-labelled, never guesses.",
   "author": {
     "name": "PsychQuant",
     "url": "https://github.com/PsychQuant/bestOCR"

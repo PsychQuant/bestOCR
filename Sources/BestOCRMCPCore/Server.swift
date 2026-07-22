@@ -88,7 +88,7 @@ public actor BestOCRMCPServer {
                         ]),
                         "doc_type": .object([
                             "type": .string("string"),
-                            "description": .string("Workload label for the condition tuple (math_pdf / scanned_book / screenshot / …)"),
+                            "description": .string("Workload label for the condition tuple (math_pdf / scanned_doc / screenshot / …)"),
                         ]),
                         "model": .object([
                             "type": .string("string"),
@@ -113,7 +113,7 @@ public actor BestOCRMCPServer {
                     "properties": .object([
                         "doc_type": .object([
                             "type": .string("string"),
-                            "description": .string("Workload doc type matching evidence rows (math_pdf / scanned_book / screenshot / …)"),
+                            "description": .string("Workload doc type matching evidence rows (math_pdf / scanned_doc / screenshot / …)"),
                         ]),
                         "lang": .object([
                             "type": .string("string"),

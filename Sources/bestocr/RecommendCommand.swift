@@ -7,7 +7,7 @@ struct Recommend: AsyncParsableCommand {
         abstract: "Evidence-labelled engine recommendation for a workload (honest evidence-pending when unmeasured).")
 
     @Option(name: .customLong("doc-type"),
-            help: "Workload doc type matching evidence rows (e.g. math_pdf, scanned_book, screenshot).")
+            help: "Workload doc type matching evidence rows (e.g. math_pdf, scanned_doc, screenshot).")
     var docType: String
 
     @Option(help: "Comma-separated required languages, e.g. \"zh-Hant,en\".")
