@@ -131,6 +131,22 @@ struct ConsensusEstimatorTests {
         }
     }
 
+    @Test func responsesPreserveRawRendering() {
+        // #13 F5: whitespace differences are real OCR signal for the OUTPUT
+        // even though voting ignores them — the published responses and the
+        // winning transcript text must be raw renderings, not normalized.
+        let it = AlignedItem(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                             responses: [
+                                "A": ItemResponse(raw: "a  b", normalized: "a b"),
+                                "B": ItemResponse(raw: "a  b", normalized: "a b"),
+                             ])
+        let est = ConsensusEstimator.estimate(items: [it])
+        #expect(est.items.first?.consensusText == "a  b",
+                "transcript keeps the raw double space")
+        #expect(est.items.first?.responses["A"] == "a  b")
+        #expect(est.items.first?.lowConsensus == false)
+    }
+
     @Test func mathAndProseRenderingsCorroborateInVoting() {
         // Round-2 finding: alignment put the two renderings on one item, but
         // voting still used raw-string equality — `$E = mc^2$` vs `E = mc^2`
@@ -209,7 +225,7 @@ struct ConsensusEstimatorTests {
         // estimate() is public API — an AlignedItem with no responses must
         // not trap in weightedWinner (ranked[0] on an empty tally).
         let empty = AlignedItem(key: ItemKey(page: 1, index: 0, kind: .proseLine),
-                                responses: [:])
+                                responses: [String: ItemResponse]())
         let real = item(1, ["A": "x", "B": "x"])
         let est = ConsensusEstimator.estimate(items: [empty, real])
         #expect(est.items.count == 1, "empty-response item carries no signal and is dropped")

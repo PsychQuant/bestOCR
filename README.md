@@ -131,7 +131,11 @@ Dawid-Skene-lite estimator: consensus transcript (`<stem>.consensus.md`, ⚠
 marks low-consensus items) + per-engine per-kind competence and a
 low-consensus review list (`<stem>.consensus.json`). Consensus is not ground
 truth — the report's `agreement` matrix surfaces inter-engine error
-correlation as a diagnostic. MCP tool: `consensus` (supports `async=true`).
+correlation as a diagnostic, and the "-lite" estimator has no confusion
+matrix (no directional error discrimination). Local engines only; runs get
+a runlog entry whose distinct estimands (`speed.ensemble_ms_per_page@v1`)
+never mix into single-engine rankings. MCP tool: `consensus` (supports
+`async=true`).
 
 Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
 `vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl`, `cloud.claude`,

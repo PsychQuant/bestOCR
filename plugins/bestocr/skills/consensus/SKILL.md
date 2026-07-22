@@ -30,6 +30,10 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
 - competence 是「與共識一致率」（Laplace 平滑），不是對 ground truth 的正確率；
   無人 corroborate 的 solo item 與平票 item 不計入 competence。
 - 引擎**逐一**執行（本機 VLM 共享 GPU／模型伺服器，循序是刻意設計，非平行）。
+- estimator 是 EM 式加權多數決（"-lite"）：無混淆矩陣，**無法做方向性混淆辨別**
+  （分不出「申→甲」與「甲→申」哪個方向更常錯）。
+- 資源上限：每頁最多 2000 個 item、單行最長 4000 字元，超限截斷（防退化輸出
+  造成 CPU/OOM）；只跑本機引擎，顯式指定 cloud engine 會被拒絕。
 - 報告的 `converged` 為 false 時表示迭代達上限、估計未達定點；competence 仍是對
   已發布 verdict 的一致率（內部一致），而在發布 competence 下不再是贏家的
   verdict 會被強制標為低共識送人工複核。

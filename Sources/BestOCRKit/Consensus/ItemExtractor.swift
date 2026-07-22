@@ -137,27 +137,19 @@ public enum ConsensusAlignment {
         guard !extractions.isEmpty else { return [] }
         let engines = extractions.keys.sorted()
 
-        // Spine = engine whose item count equals the (upper-)median count;
-        // among those, the lexicographically smallest id (deterministic and
-        // independent of who happens to sit at the median index).
-        // Degenerate-flagged engines are vetoed from spine candidacy first
-        // (#13 F4): a self-repetition loop has HIGH count, so upper-median
-        // alone would hand it the spine in the 2-engine case — the engine's
-        // own flag is the content signal count cannot provide. If every
-        // engine is flagged, fall back to the full pool.
-        let vetoed = engines.filter { !degenerate.contains($0) }
-        let pool = vetoed.isEmpty ? engines : vetoed
-        let counts = pool.map { extractions[$0]!.count }.sorted()
-        let medianCount = counts[counts.count / 2]
-        let spineEngine = pool.filter { extractions[$0]!.count == medianCount }.min()!
+        let spineEngine = spineEngine(engines: engines, extractions: extractions,
+                                      degenerate: degenerate)
         let spine = extractions[spineEngine]!
 
         // responses[spineIndex] accumulates per-engine matches.
-        var responses: [Int: [String: String]] = [:]
+        var responses: [Int: [String: ItemResponse]] = [:]
         for (i, item) in spine.enumerated() {
-            responses[i] = [spineEngine: item.normalized]
+            responses[i] = [spineEngine: ItemResponse(raw: item.text, normalized: item.normalized)]
         }
-        var solo: [(engine: String, item: ExtractedItem)] = []
+        // Unmatched items carry their gap anchor — the last matched spine
+        // index before them (−1 = before the first anchor). Position within
+        // the page is part of the transcript contract (#13 F6).
+        var solo: [(engine: String, item: ExtractedItem, anchor: Int)] = []
 
         for engine in engines where engine != spineEngine {
             let others = extractions[engine]!
@@ -166,54 +158,86 @@ public enum ConsensusAlignment {
                                                      spine: spine, other: others))
             var used = Set<Int>()
             for (si, oi) in matched {
-                responses[si]?[engine] = others[oi].normalized
+                responses[si]?[engine] = ItemResponse(raw: others[oi].text,
+                                                      normalized: others[oi].normalized)
                 used.insert(oi)
             }
+            let sortedPairs = matched.sorted { $0.1 < $1.1 }
             for (oi, item) in others.enumerated() where !used.contains(oi) {
-                solo.append((engine, item))
+                let anchor = sortedPairs.last(where: { $0.1 < oi })?.0 ?? -1
+                solo.append((engine, item, anchor))
             }
-        }
-
-        var out: [AlignedItem] = []
-        for (i, item) in spine.enumerated() {
-            out.append(AlignedItem(key: ItemKey(page: page, index: i, kind: item.kind),
-                                   responses: responses[i] ?? [:]))
         }
 
         // Cross-merge solo items: unmatched items from DIFFERENT engines that
         // are the same content must corroborate each other, not fragment into
-        // per-engine singletons. Greedy grouping by compatible kind +
-        // similarity (math compared via canonicalLabel); one engine
+        // per-engine singletons. Greedy grouping by SAME gap + compatible
+        // kind + similarity (math compared via canonicalLabel); one engine
         // contributes at most once per group. Group kind is content-based:
         // .math wins if ANY member saw math syntax — independent of engine
         // naming/order (a rendering artifact must not decide attribution).
-        var groups: [(kind: ItemKind, exemplar: ExtractedItem, responses: [String: String])] = []
-        for (engine, item) in solo.sorted(by: { $0.engine < $1.engine }) {
+        var groups: [(kind: ItemKind, exemplar: ExtractedItem, anchor: Int,
+                      responses: [String: ItemResponse])] = []
+        for (engine, item, anchor) in solo.sorted(by: { $0.engine < $1.engine }) {
             var placed = false
-            for g in groups.indices where kindCompatible(groups[g].kind, item.kind)
+            for g in groups.indices where groups[g].anchor == anchor
+                && kindCompatible(groups[g].kind, item.kind)
                 && groups[g].responses[engine] == nil {
                 let te = matchText(groups[g].exemplar), ti = matchText(item)
                 if te == ti || similarity(te, ti) >= similarityThreshold {
-                    groups[g].responses[engine] = item.normalized
+                    groups[g].responses[engine] = ItemResponse(raw: item.text,
+                                                               normalized: item.normalized)
                     if item.kind == .math { groups[g].kind = .math }
                     placed = true
                     break
                 }
             }
             if !placed {
-                groups.append((item.kind, item, [engine: item.normalized]))
+                groups.append((item.kind, item, anchor,
+                               [engine: ItemResponse(raw: item.text, normalized: item.normalized)]))
             }
         }
-        var nextIndex = spine.count
-        for group in groups {
-            out.append(AlignedItem(key: ItemKey(page: page, index: nextIndex, kind: group.kind),
-                                   responses: group.responses))
-            nextIndex += 1
+
+        // Emission interleaves solo groups back at their gap positions:
+        // anchor −1 groups precede the spine, anchor i groups follow
+        // spine[i]. Indices follow reading order.
+        var out: [AlignedItem] = []
+        var index = 0
+        func emitGroups(anchoredAt anchor: Int) {
+            for group in groups where group.anchor == anchor {
+                out.append(AlignedItem(key: ItemKey(page: page, index: index, kind: group.kind),
+                                       responses: group.responses))
+                index += 1
+            }
+        }
+        emitGroups(anchoredAt: -1)
+        for (i, item) in spine.enumerated() {
+            out.append(AlignedItem(key: ItemKey(page: page, index: index, kind: item.kind),
+                                   responses: responses[i] ?? [:]))
+            index += 1
+            emitGroups(anchoredAt: i)
         }
         return out
     }
 
     // MARK: - Internals
+
+    /// Spine = engine whose item count equals the (upper-)median count;
+    /// among those, the lexicographically smallest id (deterministic and
+    /// independent of who happens to sit at the median index).
+    /// Degenerate-flagged engines are vetoed from candidacy first (#13 F4):
+    /// a self-repetition loop has HIGH count, so upper-median alone would
+    /// hand it the spine in the 2-engine case — the engine's own flag is the
+    /// content signal count cannot provide. If every engine is flagged,
+    /// fall back to the full pool.
+    static func spineEngine(engines: [String], extractions: [String: [ExtractedItem]],
+                            degenerate: Set<String>) -> String {
+        let vetoed = engines.filter { !degenerate.contains($0) }
+        let pool = vetoed.isEmpty ? engines : vetoed
+        let counts = pool.map { extractions[$0]!.count }.sorted()
+        let medianCount = counts[counts.count / 2]
+        return pool.filter { extractions[$0]!.count == medianCount }.min()!
+    }
 
     /// LCS over (spine × other) with a similarity-gated match predicate.
     /// Returns monotone matched index pairs.

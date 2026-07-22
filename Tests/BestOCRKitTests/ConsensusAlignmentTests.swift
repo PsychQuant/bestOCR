@@ -19,7 +19,7 @@ struct ConsensusAlignmentTests {
         ])
         #expect(aligned.count == 3)
         #expect(aligned.allSatisfy { $0.responses.count == 2 })
-        #expect(aligned[0].responses["A"] == aligned[0].responses["B"])
+        #expect(aligned[0].responses["A"]?.normalized == aligned[0].responses["B"]?.normalized)
     }
 
     @Test func nearMatchAlignsDespiteOneCharDifference() {
@@ -31,8 +31,8 @@ struct ConsensusAlignmentTests {
             "B": b.map { ExtractedItem(kind: .proseLine, text: $0, normalized: ItemExtractor.normalize($0)) },
         ])
         #expect(aligned.count == 2, "near-identical lines must align, not fork")
-        #expect(aligned[0].responses["A"] == "申請文件如下")
-        #expect(aligned[0].responses["B"] == "甲請文件如下")
+        #expect(aligned[0].responses["A"]?.raw == "申請文件如下")
+        #expect(aligned[0].responses["B"]?.raw == "甲請文件如下")
     }
 
     @Test func extraLineInOneEngineDoesNotDerail() {
@@ -49,7 +49,7 @@ struct ConsensusAlignmentTests {
         let solo = aligned.filter { $0.responses.count == 1 }
         #expect(both.count == 2)
         #expect(solo.count == 1)
-        #expect(solo[0].responses["B"] == "SPURIOUS")
+        #expect(solo[0].responses["B"]?.raw == "SPURIOUS")
     }
 
     @Test func mathAndProseRenderingsOfSameLineAlign() {
@@ -144,18 +144,43 @@ struct ConsensusAlignmentTests {
         #expect(mergedKind(mathEngine: "C", proseEngine: "B") == .math)
     }
 
+    @Test func soloItemsInterleaveAtTheirGapPosition() {
+        // #13 F6: an item the spine missed must come back at its gap
+        // position, not get appended to the page tail — reading order is
+        // part of the transcript contract.
+        let short = "l1\nl2"
+        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+            "A": ItemExtractor.extract(page: 1, text: short),
+            "D": ItemExtractor.extract(page: 1, text: short),
+            "E": ItemExtractor.extract(page: 1, text: short),
+            "B": ItemExtractor.extract(page: 1, text: "l1\n$x + y$\nl2"),
+            "C": ItemExtractor.extract(page: 1, text: "l1\nx + y\nl2"),
+        ])
+        #expect(aligned.count == 3)
+        #expect(aligned[0].responses["A"]?.raw == "l1")
+        #expect(aligned[1].responses["B"]?.raw == "$x + y$",
+                "the merged solo sits between its anchors, not at the tail")
+        #expect(aligned[2].responses["A"]?.raw == "l2")
+        #expect(aligned[1].key.index == 1 && aligned[2].key.index == 2,
+                "indices follow reading order")
+    }
+
     @Test func degenerateFlaggedEngineNeverDefinesTheSpine() {
         // #13 F4: a self-repetition loop has HIGH item count — upper-median
         // alone hands it the spine in the 2-engine case. The engine's own
         // degenerate flag must veto spine candidacy.
         let loop = Array(repeating: "loop garbage line", count: 40)
         let real = ["real one", "real two", "real three"]
-        let aligned = ConsensusAlignment.align(page: 1, extractions: [
+        let extractions = [
             "A": real.map { ExtractedItem(kind: .proseLine, text: $0, normalized: ItemExtractor.normalize($0)) },
             "C": loop.map { ExtractedItem(kind: .proseLine, text: $0, normalized: ItemExtractor.normalize($0)) },
-        ], degenerate: ["C"])
-        #expect(aligned.first?.responses.keys.contains("A") == true,
-                "spine index 0 must come from the non-degenerate engine")
+        ]
+        #expect(ConsensusAlignment.spineEngine(engines: ["A", "C"], extractions: extractions,
+                                               degenerate: ["C"]) == "A",
+                "the degenerate flag must veto the high-count loop engine")
+        #expect(ConsensusAlignment.spineEngine(engines: ["A", "C"], extractions: extractions,
+                                               degenerate: []) == "C",
+                "documents the N=2 limitation the veto exists for: without the flag, upper-median picks the loop")
     }
 
     @Test func separatorNeedsThreeDashesRealDataRowsSurvive() {

@@ -245,7 +245,11 @@ struct ConsensusPipelineTests {
             "A": result("A", "one\ntwo"),
             "C": loopResult,
         ])
-        #expect(est.items.first?.responses.keys.contains("A") == true,
+        // Emission places anchor-(−1) solos before the spine, so the spine's
+        // LAST item is the order-robust observable: with the flag wired, the
+        // clean engine's "two" closes the page; with C as spine it would be
+        // C's loop line.
+        #expect(est.items.last?.responses.keys.contains("A") == true,
                 "clean engine defines the spine when the other is degenerate-flagged")
     }
 
