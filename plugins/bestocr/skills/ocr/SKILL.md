@@ -19,6 +19,13 @@ description: 把任意 PDF 或圖片轉成 Markdown——bestOCR 依測量證據
 4. **回報**:輸出的 markdown 路徑 + 用了哪個引擎;若有 `↷ ... skipped` fallback 行,一併轉述(路由決策要透明)。
 5. **順手建議**:這次 run 若值得成為證據(條件乾淨、文件типичный),提醒可用 `/bestocr:evidence-ingest` 升級成 T2 row。
 
+## 路徑安全
+
+- 優先走 MCP `ocr` tool 的 `input_path` 參數(JSON 傳值,不經 shell 解析)。
+- 組 CLI 指令時雙引號只擋空白/中文/括號,**擋不住** `$( )`、反引號、`"`、
+  換行等——檔名含這類字元時改用安全傳遞(避免把 raw 檔名內插進 shell
+  字串),或先改名再處理。
+
 ## 引擎備忘
 
 - `auto`(預設)= recommend 排序 + fallback;明確指定 `--engine` 則不 fallback。
