@@ -107,6 +107,30 @@ if $NEED_DOWNLOAD; then
         # path would let parallel downloads clobber each other mid-write.
         DL_TMP=$(mktemp "${BINARY}.XXXXXX")
         if curl -sL --max-time 300 "$URL" -o "$DL_TMP" 2>/dev/null; then
+            # Integrity check (#8): every release ships a .sha256 sidecar next
+            # to the binary asset (bare hash, one line). A fetched-but-mismatched
+            # hash is a hard fail (corruption / tampering — discard, keep the
+            # existing binary). An UNFETCHABLE sidecar is warn-and-proceed:
+            # availability wins over strictness for transient network errors,
+            # and the mismatch case is the actual attack/corruption signal.
+            EXPECTED_HASH=$(curl -sL --max-time 30 "${URL}.sha256" 2>/dev/null | tr -d '[:space:]')
+            if [[ -n "$EXPECTED_HASH" ]]; then
+                ACTUAL_HASH=$(shasum -a 256 "$DL_TMP" | awk '{print $1}')
+                if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+                    rm -f "$DL_TMP"
+                    echo "$BINARY_NAME: ERROR — sha256 mismatch for $URL (expected $EXPECTED_HASH, got $ACTUAL_HASH). Discarding download." >&2
+                    if [[ -x "$BINARY" ]]; then
+                        echo "$BINARY_NAME: keeping existing binary" >&2
+                    else
+                        exit 1
+                    fi
+                    exec "$BINARY" "$@"
+                fi
+            else
+                echo "$BINARY_NAME: WARNING — sha256 sidecar unavailable at ${URL}.sha256; proceeding unverified" >&2
+            fi
+            # Quarantine strip runs only AFTER the hash check above passed (or
+            # was explicitly waived) — never on an unverified-and-mismatched blob.
             chmod +x "$DL_TMP"
             # Strip the download quarantine so Gatekeeper's online notarization
             # check runs clean on the notarized binary (bare executables can't be
