@@ -6,3 +6,6 @@ Package.resolved
 
 # IDD per-machine local state (config, downloaded attachments, tree-lock) — not tracked
 .claude/.idd/
+
+# External reference repos — clone-on-demand, not vendored (see references/README.md)
+references/repos/
