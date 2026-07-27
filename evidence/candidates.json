@@ -1,6 +1,6 @@
 {
   "_schema": "see schema.md — tier: T1 pre-registered / T2 internal / T3 third-party",
-  "_updated": "2026-07-19",
+  "_updated": "2026-07-28",
   "candidates": [
     {
       "model": "GLM-OCR-0.9B",
@@ -43,6 +43,27 @@
       "tier": "T3",
       "evidence": "vendor claims only",
       "caveats": "document-conversion focus; output format differs from plain-markdown contract"
+    },
+    {
+      "model": "marker 2.0 (datalab; surya-2 + document assembly)",
+      "role": "document-assembly engine candidate — measured on our corpus (#15); implementation target doc.marker (#16)",
+      "tier": "T2",
+      "evidence": "2026-07-23 run over 20 scanned image-only exam PDFs (~100 pages; math + tables + multi-column), fully on-machine, --mode balanced, surya-2 GGUF served by llama-server: text OCR and inline-math LaTeX produced cleanly (best math of the three engines compared); reading order degraded — page headers/footers interleave mid-question",
+      "caveats": "APPLE-SILICON LAYOUT FRAGILITY: surya-2 sends response_format json_schema for its layout/table models, which llama-server must convert to GBNF. brew build 9960 aborted the whole run ('Failed to initialize samplers: failed to parse grammar' → health-check failure, no output); build 10090 completes but the layout/table grammar still fails (~20 errors/doc), so assembly — marker's signature capability — is the casualty on this path. Text + inline-math survive because they go through the recognition VLM, not the grammar path. Upgrading llama.cpp is the right first step but not a fix: its structured-output path is weaker than vllm's. Estimand note: the T2 claim here is qualitative fidelity on our corpus, NOT a benchmark score — do not mix with surya's vendor olmOCR-bench number"
+    },
+    {
+      "model": "surya-2 (0.65B OCR VLM; datalab-to/surya-ocr-2-gguf)",
+      "role": "potential first-party bestOCR engine — same shape as the existing Ollama VLM builds (llm + mmproj GGUF)",
+      "tier": "T3",
+      "evidence": "vendor self-reported olmOCR-bench 83.3; we have only ever exercised surya-2 wrapped inside marker, never measured it standalone on our corpus",
+      "caveats": "T3 is deliberate: our #15 evidence is about MARKER's behaviour, not surya's own accuracy — attributing marker's results to surya would be a cross-estimand error. Admitting surya as a bestOCR engine would need its own smoke-test + sweep to earn T2. Apache-2.0 code and weights (unlike chandra, whose OpenRAIL-M weights make it cloud-reference-tier only)"
+    },
+    {
+      "model": "PaddleOCR document pipeline (PP-DocLayoutV2 layout detection → crop → VL recognition → assemble)",
+      "role": "document-assembly engine candidate — measured on our corpus (#15); implementation target doc.paddleocr-pipeline (#16)",
+      "tier": "T2",
+      "evidence": "2026-07-23 3-way comparison on the same scanned multiple-choice stats page (paddleocr 3.7.0 / paddle 3.3.1, CPU on Apple Silicon): reading order CORRECT — header stays at top, Q1-Q6 in order, no interleaving. Best reading order of the three engines compared",
+      "caveats": "DISTINCT FROM the 'PaddleOCR-VL-1.6' entry above and from the classical 'PP-OCRv5 / PP-StructureV3' entry — three different Paddle things with three different estimands: PaddleOCR-VL-1.6 is per-page ELEMENT recognition (the GGUF we run in Ollama), PP-OCRv5/StructureV3 is the classical non-LLM det+rec pipeline, and THIS is the document-assembly pipeline. Never merge their numbers. Own quirk: mis-classified the whole multiple-choice block as one <table> (each line a row). No LaTeX (HTML-wrapped text). Runs paddle CPU on Apple Silicon (no MPS) — local-capable but slower than the Ollama/llama.cpp per-page path; heavier install (paddleocr + paddlepaddle + paddlex[ocr]). Architectural reason it beats marker here: PP-DocLayout is a dedicated DETECTION model, not a grammar-constrained VLM call, so it sidesteps the llama.cpp json_schema→GBNF fragility entirely — this is the '#15 design constraint: keep layout out of the grammar path'"
     }
   ]
 }
