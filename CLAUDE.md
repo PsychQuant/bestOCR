@@ -9,9 +9,15 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 54+ tests;Swift Testing(import Testing),不是 XCTest
+swift test             # 171 tests / 28 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
+- **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
+  的 `.swift-version` 寫死 `xcode`,讓 swiftly 使用者在本 repo 解析到 Xcode
+  toolchain。若 `swift build` 報 `mlx-swift ... using Swift tools version
+  6.3.0 but the installed version is <舊>`,**先跑 `type -a swift`** —— 通常
+  不是缺 toolchain,而是版本管理器的 shim 排在 `/usr/bin` 前面把它遮住了
+  (#19)。詳見 README「CLI install」段。
 - 驗證鏈一律 `set -o pipefail`:`swift test | tail` 的 exit code 是 tail 的,
   沒有 pipefail 會把失敗測試放行(20260721 changelog 記錄的實際事故)。
 - 整合測試設計:工具缺席 → 測試內 probe + 早退(印 `SKIP:`),絕不假通過;
