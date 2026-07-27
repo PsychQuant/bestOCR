@@ -114,6 +114,23 @@ shasum -a 256 ~/bin/bestocr
 swift build -c release   # binary at .build/release/bestocr
 ```
 
+Building from source needs **Swift 6.3 or newer** — a transitive `mlx-swift`
+dependency declares that floor. If `swift build` fails with
+
+```
+error: 'mlx-swift': package 'mlx-swift' @ <ver> is using Swift tools version
+       6.3.0 but the installed version is <older>
+```
+
+the usual cause is not a missing toolchain but a **shadowed** one: a version
+manager such as [swiftly](https://swiftlang.github.io/swiftly/) puts its shim
+ahead of `/usr/bin` in `PATH`, so `swift` resolves to its default toolchain
+rather than Xcode's. Check with `type -a swift` — if two entries appear, the
+first one wins and it may be the older one. The repo ships a `.swift-version`
+pinning the `xcode` toolchain, which resolves this for swiftly users; if you
+use a different manager, select a 6.3+ toolchain yourself. `xcrun swift build`
+is a quick way to confirm the Xcode toolchain builds cleanly.
+
 ## Usage
 
 ```bash
