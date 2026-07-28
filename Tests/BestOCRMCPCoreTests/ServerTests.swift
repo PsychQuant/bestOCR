@@ -58,8 +58,8 @@ struct ServerTests {
 
     @Test func toolListAndDispatchAgree() async throws {
         let names = Set(BestOCRMCPServer.defineTools().map(\.name))
-        #expect(names == ["ocr", "consensus", "recommend", "list_engines", "list_models",
-                          "ocr_status", "ocr_result"])
+        #expect(names == ["ocr", "pipeline", "consensus", "recommend", "list_engines",
+                          "list_models", "ocr_status", "ocr_result"])
         let (server, _) = try makeServer()
         for name in names {
             let result = await server.execute(name: name, arguments: [:])
@@ -91,6 +91,57 @@ struct ServerTests {
         let log = try String(contentsOf: tmpDir.appendingPathComponent("runlog.jsonl"),
                              encoding: .utf8)
         #expect(log.split(separator: "\n").count == 1)
+    }
+
+    /// The delivery path has to be reachable through MCP, otherwise a skill that
+    /// delegates to it breaks for every plugin user — the wrapper installs the
+    /// MCP binary, not the CLI.
+    @Test func pipelineRunsThroughMCPAndProducesADeliverable() async throws {
+        guard FileConverter.locate(.pandoc) != nil || FileConverter.locate(.macdoc) != nil else {
+            print("SKIP: no converter installed")
+            return
+        }
+        let (server, tmpDir) = try makeServer()
+        let img = try fixtureImage(in: tmpDir)
+        let outDir = tmpDir.appendingPathComponent("delivery").path
+        let result = await server.execute(name: "pipeline", arguments: [
+            "input_path": .string(img.path),
+            "engine": .string("stub"),
+            "out_dir": .string(outDir),
+            "doc_type": .string("screenshot"),
+        ])
+        let text = firstText(result)
+        #expect(result.isError != true, "\(text)")
+        #expect(text.contains("1 succeeded, 0 failed"))
+        #expect(text.contains("converter:"))
+        try DocxValidator.validate(URL(fileURLWithPath: "\(outDir)/fixture.docx"))
+    }
+
+    /// The refusal must survive the MCP boundary: an agent calling this tool
+    /// gets the same protection a person at the CLI does.
+    @Test func pipelineRefusesToOverwriteThroughMCPToo() async throws {
+        let (server, tmpDir) = try makeServer()
+        let img = try fixtureImage(in: tmpDir)
+        let outDir = tmpDir.appendingPathComponent("delivery")
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let target = outDir.appendingPathComponent("fixture.docx")
+        try "hand made".write(to: target, atomically: true, encoding: .utf8)
+
+        let result = await server.execute(name: "pipeline", arguments: [
+            "input_path": .string(img.path),
+            "engine": .string("stub"),
+            "out_dir": .string(outDir.path),
+        ])
+        #expect(result.isError == true)
+        #expect(firstText(result).contains("--overwrite"))
+        #expect(try String(contentsOf: target, encoding: .utf8) == "hand made")
+    }
+
+    @Test func pipelineMissingInputIsError() async throws {
+        let (server, _) = try makeServer()
+        let result = await server.execute(name: "pipeline", arguments: [:])
+        #expect(result.isError == true)
+        #expect(firstText(result).contains("input_path"))
     }
 
     @Test func ocrMissingArgIsError() async throws {

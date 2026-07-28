@@ -9,7 +9,7 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 254 tests / 39 suites;Swift Testing(import Testing),不是 XCTest
+swift test             # 257 tests / 39 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
 - **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
@@ -135,6 +135,10 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   math 判定用 **pandoc 自己的規則**(開頭 `$` 右邊非空白、結尾 `$` 左邊非空白且
   後面不是數字 → `$5 and $10` 是貨幣不是公式)。follow-up:skill 改成薄殼委派
   給這個指令(要 plugin bump,故不在 #24 scope)
+- ✅ P10 pipeline 觸達 + v0.8.0 release(2026-07-29):MCP `pipeline` tool
+  (**必要**——plugin wrapper 只裝 `bestocr-mcp` 不裝 CLI,skill 若委派給 CLI
+  對 plugin 使用者會直接壞);`ocr-to` skill 改成薄殼(規則已在 binary,skill
+  只留 workload 判斷與歸因);kit/plugin/marketplace 三號統一 0.8.0
 - Backlog:assembly estimand 的標註參照子集(spec §12,最大 open item)、
   text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 
