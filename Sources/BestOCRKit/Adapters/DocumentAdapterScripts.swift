@@ -244,7 +244,11 @@ def assemble(images: list) -> None:
 
     # No `seconds`: marker_single reloads its models on every invocation, so
     # there is no warm per-page time to report. The host measures the call.
-    print(json.dumps({"protocol": 1, "load_seconds": None,
+    cli = shutil.which("marker_single")
+    version = marker_version(cli) if cli else None
+    if version == "unknown":
+        version = None
+    print(json.dumps({"protocol": 1, "load_seconds": None, "version": version,
                       "pages": pages, "blocks": blocks}))
 
 
@@ -289,6 +293,22 @@ import argparse
 import json
 import sys
 import time
+
+
+def paddle_version():
+    """Dist metadata first; __version__ fallback (#28)."""
+    try:
+        from importlib.metadata import version
+        return version("paddleocr")
+    except Exception:
+        pass
+    try:
+        import paddleocr
+        v = getattr(paddleocr, "__version__", None)
+        return str(v) if v and isinstance(v, str) else None
+    except Exception:
+        return None
+
 
 # PaddleX block_label -> bestOCR BlockKind
 KIND_MAP = {
@@ -423,7 +443,10 @@ def assemble(images: list) -> None:
         pages.append({"page": offset, "seconds": elapsed,
                       "text": "\n\n".join(b["text"] for b in page_blocks)})
 
+    name = type(pipeline).__name__
+    base = paddle_version()
     print(json.dumps({"protocol": 1, "load_seconds": load_seconds,
+                      "version": f"{base} ({name})" if base else None,
                       "pages": pages, "blocks": blocks}))
 
 

@@ -54,9 +54,18 @@ labels, never average them, never pick one silently.
 
 ## 3. Condition tuple
 
-`(model, quant, dpi, doc_type, platform, hardware, instrument_commit)` —
+`(model, quant, dpi, doc_type, platform, hardware, instrument_commit[, tool_version])` —
 every row records the full tuple. A comparison is valid only within matching
 tuples (or across a factor the design deliberately varies).
+
+`tool_version` (optional, #28) is the **measuring tool's own** version for
+adapter-backed engines (`ext.*`, `doc.*`), reported by the process that produced
+the output — `instrument` is bestOCR's version and cannot stand in for it.
+Rows written before the field exists simply lack the key; absence decodes as
+"unrecorded", never as an error. Honesty boundary: **recording is not a new
+ranking rule.** Ranking granularity stays per-model-key (as it already is across
+`dpi` and `quant`); whether differing tool versions should partition a ranking is
+a separate estimand-semantics decision that this field enables but does not make.
 
 ### 3.1 `doc_type` vocabulary
 

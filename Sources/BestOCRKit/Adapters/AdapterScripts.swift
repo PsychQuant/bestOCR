@@ -29,10 +29,27 @@ import json
 import sys
 
 
+def tool_version(dist, module):
+    """Dist metadata first — `__version__` is not authoritative (surya 0.17.x
+    has none at all, cnocr's is a module), and the metadata answers for the
+    interpreter actually doing the work (#28)."""
+    try:
+        from importlib.metadata import version
+        return version(dist)
+    except Exception:
+        pass
+    try:
+        import importlib
+        v = getattr(importlib.import_module(module), "__version__", None)
+        return str(v) if v and isinstance(v, str) else None
+    except Exception:
+        return None
+
+
 def probe() -> None:
     try:
-        import rapidocr
-        version = getattr(rapidocr, "__version__", "unknown")
+        import rapidocr  # noqa: F401 — import check is the availability probe
+        version = tool_version("rapidocr", "rapidocr") or "unknown"
         print(json.dumps({"protocol": 1, "ok": True, "tool": "rapidocr", "version": version}))
     except Exception as exc:  # noqa: BLE001 — probe reports, never raises
         print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
@@ -51,7 +68,8 @@ def ocr(image: str, lang: str) -> None:
             for item in result:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
                     texts.append(str(item[1]))
-    print(json.dumps({"protocol": 1, "text": "\n".join(texts)}))
+    print(json.dumps({"protocol": 1, "text": "\n".join(texts),
+                      "version": tool_version("rapidocr", "rapidocr")}))
 
 
 def main() -> None:
@@ -85,14 +103,29 @@ import json
 import sys
 
 
+def tool_version(dist, module):
+    """Dist metadata first — `__version__` is not authoritative (surya 0.17.x
+    has none at all, cnocr's is a module), and the metadata answers for the
+    interpreter actually doing the work (#28)."""
+    try:
+        from importlib.metadata import version
+        return version(dist)
+    except Exception:
+        pass
+    try:
+        import importlib
+        v = getattr(importlib.import_module(module), "__version__", None)
+        return str(v) if v and isinstance(v, str) else None
+    except Exception:
+        return None
+
+
 def probe() -> None:
     try:
         import cnocr  # noqa: F401
         from cnocr import CnOcr  # noqa: F401
-        version = getattr(cnocr, "__version__", "unknown")
-        if not isinstance(version, str):  # cnocr exposes a module here
-            version = getattr(version, "__version__", "unknown")
-        print(json.dumps({"protocol": 1, "ok": True, "tool": "cnocr", "version": str(version)}))
+        version = tool_version("cnocr", "cnocr") or "unknown"
+        print(json.dumps({"protocol": 1, "ok": True, "tool": "cnocr", "version": version}))
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
 
@@ -102,7 +135,8 @@ def ocr(image: str, lang: str) -> None:
     engine = CnOcr()
     lines = engine.ocr(image)
     texts = [str(line.get("text", "")) for line in lines if isinstance(line, dict)]
-    print(json.dumps({"protocol": 1, "text": "\n".join(t for t in texts if t)}))
+    print(json.dumps({"protocol": 1, "text": "\n".join(t for t in texts if t),
+                      "version": tool_version("cnocr", "cnocr")}))
 
 
 def main() -> None:
@@ -143,6 +177,23 @@ import sys
 import tempfile
 
 
+def tool_version(dist, module):
+    """Dist metadata first — `__version__` is not authoritative (surya 0.17.x
+    has none at all, cnocr's is a module), and the metadata answers for the
+    interpreter actually doing the work (#28)."""
+    try:
+        from importlib.metadata import version
+        return version(dist)
+    except Exception:
+        pass
+    try:
+        import importlib
+        v = getattr(importlib.import_module(module), "__version__", None)
+        return str(v) if v and isinstance(v, str) else None
+    except Exception:
+        return None
+
+
 def probe() -> None:
     try:
         import surya  # noqa: F401
@@ -150,8 +201,10 @@ def probe() -> None:
             print(json.dumps({"protocol": 1, "ok": False,
                               "reason": "surya importable but surya_ocr CLI not on PATH"}))
             return
-        version = getattr(surya, "__version__", "unknown")
-        print(json.dumps({"protocol": 1, "ok": True, "tool": "surya", "version": str(version)}))
+        # dist name is surya-ocr; 0.17.x has no __version__ at all, so the old
+        # getattr probe answered "unknown" while looking like it checked (#28).
+        version = tool_version("surya-ocr", "surya") or "unknown"
+        print(json.dumps({"protocol": 1, "ok": True, "tool": "surya", "version": version}))
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
 
@@ -181,7 +234,8 @@ def ocr(image: str, lang: str) -> None:
         for path in sorted(glob.glob(os.path.join(tmp, "**", "*.json"), recursive=True)):
             with open(path, encoding="utf-8") as handle:
                 texts.extend(collect_text(json.load(handle)))
-        print(json.dumps({"protocol": 1, "text": "\n".join(t for t in texts if t)}))
+        print(json.dumps({"protocol": 1, "text": "\n".join(t for t in texts if t),
+                          "version": tool_version("surya-ocr", "surya")}))
 
 
 def main() -> None:

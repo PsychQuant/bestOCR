@@ -45,6 +45,9 @@ public struct ExternalToolEngine: OCREngine {
     struct OCRReply: Decodable {
         let `protocol`: Int
         let text: String
+        /// The tool's own version, reported by the process that did the work
+        /// (#28). Optional: old adapters and script overrides stay valid.
+        let version: String?
     }
 
     public func probe() async -> EngineAvailability {
@@ -68,6 +71,7 @@ public struct ExternalToolEngine: OCREngine {
             throw OCREngineError(engine: id, message: "adapter script missing from bundle")
         }
         var pageResults: [PageResult] = []
+        var toolVersion: String?
         for page in request.pages {
             var arguments = [script.path, "ocr", "--image", page.url.path]
             if !request.languages.isEmpty {
@@ -93,6 +97,7 @@ public struct ExternalToolEngine: OCREngine {
                                      message: "page \(page.pageNumber): no protocol-v1 JSON on adapter stdout")
             }
             let seconds = ProcessInfo.processInfo.systemUptime - t0
+            if toolVersion == nil { toolVersion = reply.version }
             pageResults.append(PageResult(page: page.pageNumber, text: reply.text,
                                           seconds: seconds,
                                           thermalState: HostInfo.thermalLabel(),
@@ -101,7 +106,8 @@ public struct ExternalToolEngine: OCREngine {
         let condition = ConditionTuple(model: tool, quant: "n/a", dpi: request.dpi,
                                        docType: request.docType, platform: "python",
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: toolVersion)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
     }
 }
