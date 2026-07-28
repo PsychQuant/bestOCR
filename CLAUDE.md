@@ -9,7 +9,7 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 224 tests / 34 suites;Swift Testing(import Testing),不是 XCTest
+swift test             # 254 tests / 39 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
 - **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
@@ -23,6 +23,12 @@ swift test             # 224 tests / 34 suites;Swift Testing(import Testing),不
 - 整合測試設計:工具缺席 → 測試內 probe + 早退(印 `SKIP:`),絕不假通過;
   surya 整合另需 `BESTOCR_TEST_SURYA=1`(首跑下載 ~GB 模型),
   `doc.*` 端到端另需 `BESTOCR_TEST_DOCPIPELINE=1`。
+- **端到端 suite 要 `@Suite(.serialized)`**:會經 AppKit/CoreGraphics 渲染
+  fixture + 跑 Vision + spawn 子行程的測試 fan out 到平行 runner 會把整個
+  process 卡住(`PipelineFlowTests` 踩過:263 started / 39 done,`--no-parallel`
+  17 秒全綠)。`swift test` 卡住時**先跑 `--no-parallel`** 分辨「測試錯」還是
+  「併發錯」。另外測試內**不要 `setenv`** —— 與其他測試併發的 `getenv` 不安全,
+  改用注入(見 `PipelineFlow.locateConverter`)。
 - embedded Python adapter **要當 Python 測**:`py_compile` + 用 fixture JSON
   驅動 adapter 自己的函式(見 `DocumentPipelineEngineTests`)。這樣工具沒裝
   的機器也能覆蓋 adapter 邏輯,而不是整段沒測。
@@ -39,9 +45,13 @@ Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
   DocumentStructure.swift  DocumentStructure / DocumentBlock / §4.3 invariant
   Recommend/               WorkloadSpec(+DocumentClass)/ EvidenceStore /
                            Recommender / Estimand / StructureMetrics
+  Convert/                 MarkdownMath(pandoc 規則)/ FileConverter /
+                           DocxValidator / OutputPlanner(防覆寫)
+  PipelineFlow.swift       input → deliverable 串接(#24)
   Consensus/               ItemExtractor / ConsensusAlignment /
                            ConsensusEstimator(Dawid-Skene-lite) / Pipeline
-Sources/bestocr/           CLI 薄殼(run / list-engines / recommend / consensus)
+Sources/bestocr/           CLI 薄殼(run / pipeline / list-engines / recommend /
+                           compare / consensus / evidence)
 repos/measureOCR           ❄️ 凍結儀器(article 1 pin)— 絕不修改
 evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未來)
 ```
@@ -118,6 +128,13 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   `doc.marker`、`DocumentClass` routing + 成本揭露、`tradeoffNote`、
   estimand 版本化相容(`Estimand.canonical`)。兩個 assembly estimand
   **有公式、刻意無數字**(缺可散布的人工標註參照集)。224/224 tests
+- ✅ P9 `bestocr pipeline`(2026-07-28,#24):normalize → route → OCR →
+  assemble → convert 單一指令。**`ocr-to` skill 的安全規則變成 code**:預設輸出
+  到獨立 `bestocr-out/`、既有輸出**在跑 OCR 之前**就拒絕(`--overwrite` 才過)、
+  批次同名 stem 對稱加後綴、docx 驗 ZIP + `word/document.xml`(exit 0 不算證據)、
+  math 判定用 **pandoc 自己的規則**(開頭 `$` 右邊非空白、結尾 `$` 左邊非空白且
+  後面不是數字 → `$5 and $10` 是貨幣不是公式)。follow-up:skill 改成薄殼委派
+  給這個指令(要 plugin bump,故不在 #24 scope)
 - Backlog:assembly estimand 的標註參照子集(spec §12,最大 open item)、
   text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 

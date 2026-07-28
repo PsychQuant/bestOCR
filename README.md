@@ -21,6 +21,16 @@ the loop. Agents get the same via `bestocr-mcp` (seven tools incl. async job
 polling; heavy OCR single-flighted). Spec:
 `docs/superpowers/specs/2026-07-21-multi-platform-ocr-design.md`.
 
+**One command to a deliverable** (`pipeline`): `bestocr pipeline scan.pdf --to
+docx` runs normalize → route → OCR → assemble → convert and prints every stage.
+It writes into its own `bestocr-out/` directory rather than beside the input, and
+**refuses before doing any OCR** if an output already exists (pass `--overwrite`).
+The converter is chosen by content — math-bearing markdown goes to pandoc for
+native OMath equations, everything else to macdoc — and the choice is named in
+the report so a fidelity complaint lands on the right project. The produced
+`.docx` is structurally validated (a real ZIP carrying `word/document.xml`), not
+assumed from an exit code.
+
 **Auto-routing is the default** (v0.4.0): `bestocr run doc.pdf` picks the
 engine from the recommend ordering (measured rows first, capability filter
 otherwise) and falls back past unavailable/failing engines — every hop is
@@ -148,6 +158,7 @@ is a quick way to confirm the Xcode toolchain builds cleanly.
 
 ```bash
 bestocr list-engines                            # probe table + install hints
+bestocr pipeline scan.pdf --to docx --doc-type scanned_doc   # input → deliverable
 bestocr run paper.pdf --doc-type math_pdf --math   # auto-routed
 bestocr run page.png --engine vision --doc-type screenshot
 bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
