@@ -1,6 +1,6 @@
 {
   "_schema": "see schema.md — tier: T1 pre-registered / T2 internal / T3 third-party",
-  "_updated": "2026-07-28",
+  "_updated": "2026-07-29",
   "candidates": [
     {
       "model": "GLM-OCR-0.9B",
@@ -56,7 +56,7 @@
       "role": "potential first-party bestOCR engine — same shape as the existing Ollama VLM builds (llm + mmproj GGUF)",
       "tier": "T3",
       "evidence": "vendor self-reported olmOCR-bench 83.3; we have only ever exercised surya-2 wrapped inside marker, never measured it standalone on our corpus",
-      "caveats": "T3 is deliberate: our #15 evidence is about MARKER's behaviour, not surya's own accuracy — attributing marker's results to surya would be a cross-estimand error. Admitting surya as a bestOCR engine would need its own smoke-test + sweep to earn T2. Apache-2.0 code and weights (unlike chandra, whose OpenRAIL-M weights make it cloud-reference-tier only)"
+      "caveats": "T3 is deliberate: our #15 evidence is about MARKER's behaviour, not surya's own accuracy — attributing marker's results to surya would be a cross-estimand error. Admitting surya as a bestOCR engine would need its own smoke-test + sweep to earn T2. Apache-2.0 code and weights (unlike chandra, whose OpenRAIL-M weights make it cloud-reference-tier only). PIN DECISION (#29): ext.surya deliberately stays on the 0.17.x classical generation (self-contained, no model server — the fallback that survives llama-server breakage); this entry is what admitting surya-2 as a SEPARATE engine would build on, not an upgrade path for ext.surya"
     },
     {
       "model": "PaddleOCR document pipeline (PP-DocLayoutV2 layout detection → crop → VL recognition → assemble)",
