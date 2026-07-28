@@ -18,13 +18,35 @@ available and *names the tier* in its answer. T3-only candidates are labelled
 ## 2. Estimand
 
 State *what* the number is, precisely enough that two numbers with different
-definitions can never be conflated:
+definitions can never be conflated. **Names are versioned: `name@vN`.** A
+version bump means the formula changed, so `@v1` and `@v2` are different
+estimands and never mix.
 
-- `speed.ms_per_page` — wall-clock per page, warm model, single stream
-- `quality.word_recall` — vs `pdftotext` reference (LaTeX-compiled docs) or
-  archive.org ABBYY layer (scanned docs) — these are *different referents*;
-  label which
-- derived scores (e.g. Pareto proxies) must name their formula version
+*Compatibility*: rows written before this convention carry unversioned names
+(`speed.ms_per_page`, `quality.word_recall`). Those are **read as `@v1`** — no
+committed row is rewritten. `Estimand.canonical(_:)` in `BestOCRKit` is what
+makes this true in code rather than only on paper; without it a legacy row and
+a freshly ingested `@v1` row would look like two estimands and split one
+ranking into two.
+
+| Estimand | Definition | Status |
+|----------|------------|--------|
+| `speed.ms_per_page@v1` | wall-clock per page, **warm** model, single stream (model-load time excluded — an engine that loads a heavy pipeline reports load separately) | measured |
+| `speed.ensemble_ms_per_page@v1` | total compute across a sequential multi-engine ensemble, per page. Distinct from the above and **never** comparable to it | measured |
+| `quality.word_recall@v1` | vs `pdftotext` reference (LaTeX-compiled docs) or archive.org ABBYY layer (scanned docs) — these are *different referents*; label which | measured |
+| `quality.token_recall_vs_cloud@v1` | token recall against a cloud engine's output. The referent is a **model output, not ground truth**; never comparable to `word_recall` | measured |
+| `quality.reading_order_tau@v1` | Kendall's **tau-b** between the engine's block sequence and a reference block sequence. Matching is greedy one-to-one in produced order on the Dice coefficient over character bigrams of case-folded, whitespace-collapsed text, accepted at **≥ 0.60** (ties broken by lowest reference index, so the result is deterministic). Range [−1, 1]; 1 is identical order; `nil` below two matched pairs. Unmatched blocks (produced-but-absent, reference-but-missed) are **excluded from the coefficient and reported separately** — folding them in would blend a *detection* failure into an *ordering* score | **defined, unmeasured** |
+| `quality.table_structure_f1@v1` | cell-level F1 over the set of `(row index, column index, normalized text)` triples: precision, recall, and their harmonic mean. Cell-level rather than whole-table so a table recovered with one merged column still scores most of its cells | **defined, unmeasured** |
+
+Derived scores (e.g. Pareto proxies) must name their formula version.
+
+**"Defined, unmeasured" is a status, not a placeholder.** Both assembly
+estimands require a human-annotated reference subset — a checked block sequence
+and cell set for a set of pages — and bestOCR has none. `recommend` therefore
+answers *evidence-pending* for anything that would depend on them. Defining an
+estimand and measuring it are separate acts; naming one without a formula
+violates hard rule 2, and claiming a number without a reference violates tier
+discipline.
 
 The mac-benchmark lesson (issues #18–#21) applies verbatim: shares/means that
 differ only in estimand or fit are *both true* — report them side by side with
@@ -35,6 +57,27 @@ labels, never average them, never pick one silently.
 `(model, quant, dpi, doc_type, platform, hardware, instrument_commit)` —
 every row records the full tuple. A comparison is valid only within matching
 tuples (or across a factor the design deliberately varies).
+
+### 3.1 `doc_type` vocabulary
+
+`doc_type` is the **corpus class** field: what kind of document was measured.
+It is free-form `String` by design, so the vocabulary grows by adding *values*,
+never by changing the tuple's shape — every existing row keeps decoding.
+
+| Value | Meaning |
+|-------|---------|
+| `math_pdf` / `math_compiled` | formula-bearing documents (LaTeX-compiled reference available) |
+| `scanned_doc` | scanned, image-only page; no text layer (canonical term for scanned material) |
+| `gov_doc` | official/form-like documents |
+| `screenshot` | screen capture |
+| `multicolumn_scan` | scanned multi-column page — reading order is the hard part |
+| `tabular_doc` | table-dominant document |
+
+The last two exist for document-assembly engines (see
+`docs/superpowers/specs/2026-07-28-document-assembly-engines.md` §5.2). Note
+what they are **not**: they are not a query axis. What a *caller asks for* lives
+in `WorkloadSpec.documentClass`; the tuple records what was **measured**. Keeping
+those apart is why document-class never became a tuple field.
 
 ## Row format (evidence tables, future results ingestion)
 

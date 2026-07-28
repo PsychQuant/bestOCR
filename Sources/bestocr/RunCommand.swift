@@ -34,6 +34,10 @@ struct Run: AsyncParsableCommand {
     @Flag(help: "auto mode: require math-aware output (math_markdown engines only).")
     var math: Bool = false
 
+    @Option(name: .customLong("document-class"),
+            help: "auto mode: structural class of the input — unspecified (default) | single-column | multi-column | tabular | mixed. The last three require a document-assembly engine.")
+    var documentClass: String = "unspecified"
+
     @Option(help: "Override the VLM model tag (explicit vlm.* engines only).")
     var model: String?
 
@@ -58,10 +62,15 @@ struct Run: AsyncParsableCommand {
                 guard let prio = WorkloadSpec.Priority(rawValue: priority) else {
                     throw ValidationError("--priority must be one of: quality, speed, balanced")
                 }
+                guard let docClass = DocumentClass.parse(documentClass) else {
+                    throw ValidationError("--document-class must be one of: "
+                        + DocumentClass.allCases.map(\.rawValue).joined(separator: ", "))
+                }
                 let evidence = try EvidenceStore.load(from: EvidenceStore.defaultURL())
                 summary = try await RunPipeline.executeAuto(
                     inputPath: input, dpi: dpi, pageSpec: pages, languages: languages,
                     docType: docType, priority: prio, needsMath: math,
+                    documentClass: docClass,
                     outDir: URL(fileURLWithPath: out),
                     registry: registry, evidence: evidence, runLog: RunLog.default())
             } else {
@@ -71,6 +80,9 @@ struct Run: AsyncParsableCommand {
                     outDir: URL(fileURLWithPath: out),
                     registry: registry, runLog: RunLog.default())
             }
+            // Routing notices first: they explain the candidate list the
+            // fallback trail below was drawn from.
+            for notice in summary.notices { print("ℹ \(notice)") }
             // Fallback trail (auto mode) — every hop is visible, never silent.
             for attempt in summary.attempts where attempt.failure != nil {
                 print("↷ \(attempt.engineID) skipped: \(attempt.failure!)")
@@ -81,6 +93,16 @@ struct Run: AsyncParsableCommand {
             print("✓ \(chosen): \(pageCount) page(s) in \(String(format: "%.1f", total))s")
             print("  markdown: \(summary.outputMarkdown.path)")
             print("  meta:     \(summary.outputMeta.path)")
+            if let structure = summary.result.document {
+                print("  assembly: \(structure.blocks.count) block(s) in reading order")
+                if let load = structure.loadSeconds {
+                    // Warm-model estimand: this is NOT inside the per-page times.
+                    print("  model load: \(String(format: "%.1f", load))s (excluded from per-page timing)")
+                }
+            }
+            if let tradeoff = registry.engine(id: chosen)?.tradeoffNote {
+                print("  tradeoff: \(tradeoff)")
+            }
             if summary.result.pages.contains(where: \.degenerateFlagged) {
                 print("  ⚠ repetition guard tripped on at least one page — inspect the output")
             }

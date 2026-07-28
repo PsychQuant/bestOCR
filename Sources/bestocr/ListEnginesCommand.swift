@@ -10,7 +10,7 @@ struct ListEngines: AsyncParsableCommand {
         let registry = EngineRegistry.standard()
         let probed = await registry.probeAll()
         let idWidth = max(probed.map { $0.engine.id.count }.max() ?? 0, 6)
-        print("\("ENGINE".padding(toLength: idWidth, withPad: " ", startingAt: 0))  FAMILY           OUTPUT         STATUS")
+        print("\("ENGINE".padding(toLength: idWidth, withPad: " ", startingAt: 0))  FAMILY             OUTPUT         ASSEMBLY       STATUS")
         for (engine, availability) in probed {
             let status: String
             switch availability {
@@ -20,9 +20,15 @@ struct ListEngines: AsyncParsableCommand {
                 status = "✗ \(reason)" + (hint.map { " — install: \($0)" } ?? "")
             }
             let id = engine.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
-            let family = engine.family.rawValue.padding(toLength: 15, withPad: " ", startingAt: 0)
+            let family = engine.family.rawValue.padding(toLength: 17, withPad: " ", startingAt: 0)
             let output = engine.capabilities.outputLevel.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
-            print("\(id)  \(family)  \(output)  \(status)")
+            let assembly = engine.capabilities.assembly.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
+            print("\(id)  \(family)  \(output)  \(assembly)  \(status)")
+            // The tradeoff sits with the engine wherever it is offered, so an
+            // engine is never chosen from this table without its cost in view.
+            if let tradeoff = engine.tradeoffNote {
+                print("\(String(repeating: " ", count: idWidth))  ↳ tradeoff: \(tradeoff)")
+            }
         }
     }
 }

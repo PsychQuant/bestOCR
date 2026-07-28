@@ -14,6 +14,11 @@ public struct RunSummary: Sendable {
     public let outputMeta: URL
     public let result: OCRResult
     public let attempts: [Attempt]
+    /// Things the caller must be told about how this run was routed — e.g. that
+    /// a document class forced an assembly engine and what that costs. Carried
+    /// out of the pipeline rather than printed here, so CLI and MCP can render
+    /// them their own way and neither can drop them silently.
+    public let notices: [String]
 }
 
 /// The shared run flow (spec §6, §7): probe → normalize → recognize → write
@@ -53,15 +58,17 @@ public enum RunPipeline {
     public static func executeAuto(inputPath: String, dpi: Double, pageSpec: String,
                                    languages: [String], docType: String,
                                    priority: WorkloadSpec.Priority, needsMath: Bool,
+                                   documentClass: DocumentClass = .unspecified,
                                    outDir: URL, registry: EngineRegistry,
                                    evidence: EvidenceStore,
                                    runLog: RunLog) async throws -> RunSummary {
         let selection = AutoRouter.candidates(docType: docType, languages: languages,
                                               priority: priority, needsMath: needsMath,
+                                              documentClass: documentClass,
                                               registry: registry, evidence: evidence)
         guard !selection.candidateIDs.isEmpty else {
             throw OCREngineError(engine: "auto",
-                                 message: "no engine matches this workload (doc-type \(docType), math=\(needsMath), languages \(languages))")
+                                 message: "no engine matches this workload (doc-type \(docType), math=\(needsMath), languages \(languages), document-class \(documentClass.rawValue))")
         }
 
         let normalized = try InputNormalizer.normalize(
@@ -81,7 +88,8 @@ public enum RunPipeline {
                 let result = try await engine.recognize(request)
                 attempts.append(.init(engineID: candidateID, failure: nil))
                 return try writeOutputs(result: result, inputPath: inputPath,
-                                        outDir: outDir, runLog: runLog, attempts: attempts)
+                                        outDir: outDir, runLog: runLog, attempts: attempts,
+                                        notices: [selection.notice].compactMap { $0 })
             } catch let error as OCREngineError {
                 attempts.append(.init(engineID: candidateID,
                                       failure: error.errorDescription ?? error.message))
@@ -98,8 +106,8 @@ public enum RunPipeline {
 
     /// Shared output path so explicit and auto runs can never diverge.
     private static func writeOutputs(result: OCRResult, inputPath: String, outDir: URL,
-                                     runLog: RunLog,
-                                     attempts: [RunSummary.Attempt]) throws -> RunSummary {
+                                     runLog: RunLog, attempts: [RunSummary.Attempt],
+                                     notices: [String] = []) throws -> RunSummary {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
         let mdURL = outDir.appendingPathComponent("\(stem).md")
@@ -114,6 +122,7 @@ public enum RunPipeline {
         let entry = RunLogEntry(from: result, input: inputPath, output: mdURL.path)
         try runLog.append(entry)
         return RunSummary(runID: entry.id, outputMarkdown: mdURL,
-                          outputMeta: metaURL, result: result, attempts: attempts)
+                          outputMeta: metaURL, result: result, attempts: attempts,
+                          notices: notices)
     }
 }

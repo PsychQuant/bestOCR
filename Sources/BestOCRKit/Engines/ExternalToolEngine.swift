@@ -27,61 +27,19 @@ public struct ExternalToolEngine: OCREngine {
     }
 
     /// `BESTOCR_PYTHON` env override, else `python3` from PATH.
-    public static func locatePython() -> URL? {
-        if let override = ProcessInfo.processInfo.environment["BESTOCR_PYTHON"] {
-            return FileManager.default.isExecutableFile(atPath: override)
-                ? URL(fileURLWithPath: override) : nil
-        }
-        let pathDirs = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
-        for dir in pathDirs {
-            let candidate = "\(dir)/python3"
-            if FileManager.default.isExecutableFile(atPath: candidate) {
-                return URL(fileURLWithPath: candidate)
-            }
-        }
-        return nil
-    }
+    public static func locatePython() -> URL? { AdapterProtocolV1.locatePython() }
 
-    /// Materializes the embedded adapter script (single-binary distribution,
-    /// M3): written to `BESTOCR_ADAPTER_DIR` or `~/.bestocr/adapters/`, and
-    /// rewritten whenever the on-disk copy differs from the embedded source.
+    /// Materializes the embedded adapter script (single-binary distribution, M3).
     func scriptURL() -> URL? {
         if let scriptOverride { return scriptOverride }
         guard let content = AdapterScripts.script(for: tool) else { return nil }
-        let dirPath = ProcessInfo.processInfo.environment["BESTOCR_ADAPTER_DIR"]
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".bestocr/adapters").path
-        let dir = URL(fileURLWithPath: dirPath)
-        let url = dir.appendingPathComponent("bestocr-\(tool)-adapter.py")
-        if (try? String(contentsOf: url, encoding: .utf8)) != content {
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                try content.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                return nil
-            }
-        }
-        return url
+        return AdapterProtocolV1.materialize(content, tool: tool)
     }
 
     /// Protocol reads exactly one JSON object: the LAST stdout line that
     /// parses as JSON (download noise above it is ignored).
     static func lastJSONLine(_ stdout: String) -> Data? {
-        for line in stdout.split(separator: "\n").reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("{") else { continue }
-            let data = Data(trimmed.utf8)
-            if (try? JSONSerialization.jsonObject(with: data)) != nil { return data }
-        }
-        return nil
-    }
-
-    struct ProbeReply: Decodable {
-        let `protocol`: Int
-        let ok: Bool
-        let tool: String?
-        let version: String?
-        let reason: String?
+        AdapterProtocolV1.lastJSONLine(stdout)
     }
 
     struct OCRReply: Decodable {
@@ -98,29 +56,8 @@ public struct ExternalToolEngine: OCREngine {
             return .unavailable(reason: "adapter script for \(tool) missing from bundle",
                                 installHint: nil)
         }
-        let run: Subprocess.Result
-        do {
-            run = try Subprocess.run(python, arguments: [script.path, "probe"], timeout: 60)
-        } catch {
-            return .unavailable(reason: "probe failed: \(error.localizedDescription)",
-                                installHint: installHint)
-        }
-        guard run.exitCode == 0,
-              let data = Self.lastJSONLine(run.stdout),
-              let reply = try? JSONDecoder().decode(ProbeReply.self, from: data) else {
-            let tail = run.stderr.suffix(200).trimmingCharacters(in: .whitespacesAndNewlines)
-            return .unavailable(reason: "probe exited \(run.exitCode) without a protocol reply\(tail.isEmpty ? "" : ": \(tail)")",
-                                installHint: installHint)
-        }
-        guard Self.supportedProtocols.contains(reply.protocol) else {
-            return .unavailable(reason: "unsupported adapter protocol v\(reply.protocol)",
-                                installHint: nil)
-        }
-        guard reply.ok else {
-            return .unavailable(reason: reply.reason ?? "tool import failed",
-                                installHint: installHint)
-        }
-        return .available
+        return AdapterProtocolV1.probe(python: python, script: script, tool: tool,
+                                       installHint: installHint)
     }
 
     public func recognize(_ request: OCRRequest) async throws -> OCRResult {

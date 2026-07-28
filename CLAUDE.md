@@ -9,7 +9,7 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 171 tests / 28 suites;Swift Testing(import Testing),不是 XCTest
+swift test             # 224 tests / 34 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
 - **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
@@ -21,16 +21,24 @@ swift test             # 171 tests / 28 suites;Swift Testing(import Testing),不
 - 驗證鏈一律 `set -o pipefail`:`swift test | tail` 的 exit code 是 tail 的,
   沒有 pipefail 會把失敗測試放行(20260721 changelog 記錄的實際事故)。
 - 整合測試設計:工具缺席 → 測試內 probe + 早退(印 `SKIP:`),絕不假通過;
-  surya 整合另需 `BESTOCR_TEST_SURYA=1`(首跑下載 ~GB 模型)。
+  surya 整合另需 `BESTOCR_TEST_SURYA=1`(首跑下載 ~GB 模型),
+  `doc.*` 端到端另需 `BESTOCR_TEST_DOCPIPELINE=1`。
+- embedded Python adapter **要當 Python 測**:`py_compile` + 用 fixture JSON
+  驅動 adapter 自己的函式(見 `DocumentPipelineEngineTests`)。這樣工具沒裝
+  的機器也能覆蓋 adapter 邏輯,而不是整段沒測。
 
 ## 架構速覽
 
 ```
 Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
   Engines/                 VisionEngine / TesseractEngine / VLMEngine /
-                           ExternalToolEngine(+ Subprocess、ModelProfile)
-  Adapters/*.py            OCR protocol v1 Python adapters(SPM resource)
-  Recommend/               WorkloadSpec / EvidenceStore / Recommender
+                           ExternalToolEngine / DocumentPipelineEngine
+                           (+ Subprocess、ModelProfile)
+  Adapters/                AdapterProtocolV1(共用 protocol)+ AdapterScripts /
+                           DocumentAdapterScripts(embedded Python,非 resource)
+  DocumentStructure.swift  DocumentStructure / DocumentBlock / §4.3 invariant
+  Recommend/               WorkloadSpec(+DocumentClass)/ EvidenceStore /
+                           Recommender / Estimand / StructureMetrics
   Consensus/               ItemExtractor / ConsensusAlignment /
                            ConsensusEstimator(Dawid-Skene-lite) / Pipeline
 Sources/bestocr/           CLI 薄殼(run / list-engines / recommend / consensus)
@@ -62,6 +70,15 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
 - OCR protocol v1(bestASR 模式):argv spawn、stdout 最後一行 JSON、
   非零 exit + stderr;env 覆寫:`BESTOCR_PYTHON` / `BESTOCR_RUNLOG` /
   `BESTOCR_EVIDENCE`。
+- **marker `--mode` 預設隨裝置**(`marker/config/parser.py` 實證):GPU 走
+  `balanced`(VLM layout),**CPU/MPS 走 `fast`(CPU layout detector)**。#15
+  的 layout grammar 全滅是明確傳 `--mode balanced` 才踩到的;marker 在 Apple
+  Silicon **不是天生 layout 壞掉**。`doc.marker` adapter 因此刻意不傳
+  `--mode`(讓 marker 取裝置預設),`BESTOCR_MARKER_MODE` 可覆寫。
+- **assembly adapter 的計時契約**(`AssembleInvocation`):有 Python pipeline
+  物件的(paddle)load 一次 → 逐頁 warm 計時 + `load_seconds` 分開報;只有
+  CLI 的(marker)每次 invoke 重載 → 由 host 計時。**絕不**用 batch 總時間
+  除頁數(看起來像 per-page 其實沒量到)。
 - **nougat deferred**:安裝困在 pipx venv、上游封存;要 re-admit 就補一個
   adapter script + wiring(參考 rapidocr adapter)。
 - MLX serving path 等 mlx-swift-lm 上游修復(measureOCR KNOWN-ISSUES #4)。
@@ -94,7 +111,15 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   runlog entry、`speed.ensemble_ms_per_page@v1` 獨立 estimand never-mix);
   #13 robustness hardening(placeholder 棄權、gap-interval solo 合併、
   資源上限、cloud/needsNetwork 拒絕、`schema_version: 2`)。171/171 tests
-- Backlog:text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
+- ✅ P8 document-assembly engines + document-class routing(2026-07-28,#16;
+  spec `docs/superpowers/specs/2026-07-28-document-assembly-engines.md` 由
+  PR #21 先進 main):`OCRResult.document`(optional,reading order = blocks
+  陣列順序)、`EngineCapabilities.assembly`、`doc.paddleocr-pipeline` /
+  `doc.marker`、`DocumentClass` routing + 成本揭露、`tradeoffNote`、
+  estimand 版本化相容(`Estimand.canonical`)。兩個 assembly estimand
+  **有公式、刻意無數字**(缺可散布的人工標註參照集)。224/224 tests
+- Backlog:assembly estimand 的標註參照子集(spec §12,最大 open item)、
+  text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 
 ## Cloud reference 備忘(M4)
 

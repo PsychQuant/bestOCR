@@ -57,12 +57,29 @@ public enum Recommender {
         }
     }
 
+    /// Every place an engine is offered carries its tradeoff, so a caller never
+    /// sees a recommendation whose cost is documented only elsewhere
+    /// (document-assembly spec §8 / phase 5).
+    static func labelled(_ note: String, _ engine: any OCREngine) -> String {
+        guard let tradeoff = engine.tradeoffNote else { return note }
+        return "\(note) — tradeoff: \(tradeoff)"
+    }
+
     public static func recommend(workload: WorkloadSpec, registry: EngineRegistry,
                                  evidence: EvidenceStore) -> Recommendation {
         // 1. Capability filter (never rank what can't do the job).
         let candidates = registry.engines.filter { engine in
             if engine.family == .cloudReference { return false }   // spec §6.1.3
             if workload.needsMath && engine.capabilities.outputLevel != .mathMarkdown { return false }
+            // Document-assembly spec §7.3: a multi-column / tabular / mixed
+            // document cannot be served by per-page transcription at all, so
+            // this is a capability question, not a preference. `.readingOrder`
+            // is accepted for `tabular` on purpose — demanding `.fullStructure`
+            // would drop an engine that does produce tables, which is a QUALITY
+            // judgement with no measured rows behind it. That difference is
+            // carried by the engine's tradeoff label instead.
+            if workload.documentClass.requiresAssembly
+                && engine.capabilities.assembly == .none { return false }
             if !workload.languages.isEmpty {
                 let supported = Set(engine.capabilities.languages)
                 if !workload.languages.allSatisfy(supported.contains) { return false }
@@ -78,7 +95,12 @@ public enum Recommender {
         var wanted = estimands(for: workload.priority)[0]
         var usable: [EvidenceRow] = []
         for preference in estimands(for: workload.priority) {
-            let matching = docRows.filter { $0.estimand == preference.name && $0.tier != "T3" }
+            // Compared canonically so a legacy unversioned row and a freshly
+            // ingested `@v1` row are the same estimand (schema.md §2 compat).
+            let wantedName = Estimand.canonical(preference.name)
+            let matching = docRows.filter {
+                Estimand.canonical($0.estimand) == wantedName && $0.tier != "T3"
+            }
                 .filter { candidateKeys.contains(baseModel($0.condition.model)) }
             if !matching.isEmpty {
                 wanted = preference
@@ -91,7 +113,8 @@ public enum Recommender {
             // 3a. Honest evidence-pending: capability filtering only.
             let entries = candidates.map {
                 Recommendation.Entry(engineID: $0.id,
-                                     note: "unverified — no measured rows for this workload")
+                                     note: labelled("unverified — no measured rows for this workload",
+                                                    $0))
             }
             return Recommendation(mode: .evidencePending, entries: entries, citations: [])
         }
@@ -128,8 +151,8 @@ public enum Recommender {
         var entries = ranked.map { pair in
             Recommendation.Entry(
                 engineID: pair.engine.id,
-                note: "\(wanted.name) = \(pair.row.value) (\(tier), \(pair.row.source))"
-                    + (pair.row.caveat.map { " — caveat: \($0)" } ?? ""))
+                note: labelled("\(Estimand.canonical(wanted.name)) = \(pair.row.value) (\(tier), \(pair.row.source))"
+                    + (pair.row.caveat.map { " — caveat: \($0)" } ?? ""), pair.engine))
         }
         // Other-tier evidence is surfaced but never mixed into the ranking.
         let otherTiers = Dictionary(grouping: usable.filter { $0.tier != tier },
@@ -139,10 +162,12 @@ public enum Recommender {
             if let rows = otherTiers[key], let first = rows.first {
                 return Recommendation.Entry(
                     engineID: engine.id,
-                    note: "has \(first.tier) evidence — not rankable against \(tier) rows")
+                    note: labelled("has \(first.tier) evidence — not rankable against \(tier) rows",
+                                   engine))
             }
-            return Recommendation.Entry(engineID: engine.id,
-                                        note: "unverified — no measured rows for this workload")
+            return Recommendation.Entry(
+                engineID: engine.id,
+                note: labelled("unverified — no measured rows for this workload", engine))
         }
         return Recommendation(mode: .ranked(tier: tier), entries: entries,
                               citations: ranked.map(\.row.source))

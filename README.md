@@ -6,9 +6,9 @@ should I run for *this* document workload?" with numbers that trace back to a
 pre-registered benchmark, never to vibes.
 
 **Status: M4 — all four spec milestones shipped.** `bestocr run` executes any
-of 11 engines (Apple Vision, tesseract, rapidocr/cnocr/surya via protocol-v1
-Python adapters, Ollama VLMs, and Claude/OpenAI/Gemini cloud *reference*
-engines); `bestocr recommend` returns an evidence-labelled answer — a
+of 13 engines (Apple Vision, tesseract, rapidocr/cnocr/surya via protocol-v1
+Python adapters, Ollama VLMs, two *document-assembly* pipelines, and
+Claude/OpenAI/Gemini cloud *reference* engines); `bestocr recommend` returns an evidence-labelled answer — a
 tier-named ranking when measured rows exist (repo `evidence/rows.jsonl`,
 or `~/.bestocr/evidence.jsonl` auto-fetched by the plugin wrapper for
 installed users),
@@ -35,8 +35,21 @@ equations in the docx), macdoc otherwise (literal LaTeX, disclosed).
 promotes speed **and** quality rows; `recommend --priority quality` falls
 back to that metric only when no `word_recall` rows exist (never blended).
 PaddleOCR-VL's `\( \)` math delimiters are normalized to `$`/`$$` at the
-engine (matched pairs only). Backlog: text-layer-aware PDF shortcut, MLX
-serving path (upstream).
+engine (matched pairs only).
+
+**Document assembly is a routed capability** (`doc.paddleocr-pipeline`,
+`doc.marker`): per-page transcription cannot resolve multi-column reading
+order, so `--document-class multi-column|tabular|mixed` restricts candidates to
+engines that assemble, and prints what that costs (both are much slower than the
+per-page path). Results carry an optional `document` structure whose block order
+*is* the reading order. The two fidelity estimands
+(`quality.reading_order_tau@v1`, `quality.table_structure_f1@v1`) are **defined
+with formulas and deliberately unmeasured** — they need a human-annotated
+reference subset built from redistributable material, which does not exist yet,
+so `recommend` keeps answering *evidence-pending* for them. Design:
+`docs/superpowers/specs/2026-07-28-document-assembly-engines.md`. Backlog:
+that annotated subset, text-layer-aware PDF shortcut, MLX serving path
+(upstream).
 
 ## Install for AI agents (Claude Code)
 
@@ -140,6 +153,7 @@ bestocr run page.png --engine vision --doc-type screenshot
 bestocr run paper.pdf --engine vlm.glm-ocr --dpi 150 --pages 1-3 \
     --doc-type math_pdf --out out/
 bestocr recommend --doc-type math_pdf --math --priority quality
+bestocr run scan.pdf --doc-type multicolumn_scan --document-class multi-column
 bestocr compare page.png --engine vision --vs cloud.claude
 bestocr consensus scan.pdf --doc-type gov_doc   # multi-engine CCT adjudication
 bestocr evidence ingest <run-id>                # runlog → T2 rows (explicit gate)
@@ -158,8 +172,11 @@ never mix into single-engine rankings. MCP tool: `consensus` (supports
 `async=true`).
 
 Engine ids: `vision`, `tesseract`, `ext.rapidocr`, `ext.cnocr`, `ext.surya`,
-`vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl`, `cloud.claude`,
-`cloud.openai`, `cloud.gemini`. VLM engines need a running `ollama serve`;
+`vlm.glm-ocr`, `vlm.ovisocr2`, `vlm.paddleocr-vl`, `doc.paddleocr-pipeline`,
+`doc.marker`, `cloud.claude`, `cloud.openai`, `cloud.gemini`. The two `doc.*`
+engines need Python tooling (`paddleocr`+`paddlepaddle`+`paddlex[ocr]`, or
+`uv tool install marker-pdf`) and are probe-gated with install hints;
+`list-engines` prints each one's honest tradeoff next to it. VLM engines need a running `ollama serve`;
 defaults are the SHA256-pinned `-anova:q8_0` builds, `--model` overrides.
 Cloud engines are probe-gated by `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
 `GEMINI_API_KEY` (documents leave the machine — reference tier only; model
