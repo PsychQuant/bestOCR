@@ -108,6 +108,85 @@ public actor BestOCRMCPServer {
                 annotations: .init(readOnlyHint: false, openWorldHint: false)
             ),
             Tool(
+                name: "pipeline",
+                description: "One call from input to deliverable: normalize → route → OCR "
+                    + "→ assemble → convert. Writes into its own output directory and "
+                    + "REFUSES before doing any OCR if an output already exists (pass "
+                    + "overwrite). The converter is chosen by content — math-bearing "
+                    + "markdown goes to pandoc for native Word OMath equations, otherwise "
+                    + "macdoc with literal LaTeX — and the choice is reported so a "
+                    + "fidelity problem can be attributed correctly. The produced file is "
+                    + "structurally validated, not assumed from an exit code. Long "
+                    + "documents: pass async=true, then poll ocr_status / ocr_result.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "input_path": .object([
+                            "type": .string("string"),
+                            "description": .string("Absolute path to a PDF or image (use input_paths for a batch)"),
+                        ]),
+                        "input_paths": .object([
+                            "type": .string("array"),
+                            "items": .object(["type": .string("string")]),
+                            "description": .string("Absolute paths for a batch. Colliding stems from different folders are suffixed so they cannot overwrite each other"),
+                        ]),
+                        "to": .object([
+                            "type": .string("string"),
+                            "description": .string("Target format (v1: docx)"),
+                        ]),
+                        "out_dir": .object([
+                            "type": .string("string"),
+                            "description": .string("Output directory. Default: bestocr-out/ beside the first input — never the input's own folder, where the user's own files live"),
+                        ]),
+                        "engine": .object([
+                            "type": .string("string"),
+                            "description": .string("Engine id or \"auto\" (default: recommend-ordered routing + fallback)"),
+                        ]),
+                        "doc_type": .object([
+                            "type": .string("string"),
+                            "description": .string("Workload label for the condition tuple (math_pdf / scanned_doc / multicolumn_scan / …)"),
+                        ]),
+                        "document_class": .object([
+                            "type": .string("string"),
+                            "description": .string("unspecified (default) | single_column | multi_column | tabular | mixed. The last three restrict candidates to document-assembly engines"),
+                        ]),
+                        "priority": .object([
+                            "type": .string("string"),
+                            "description": .string("quality | speed | balanced (default balanced)"),
+                        ]),
+                        "math": .object([
+                            "type": .string("boolean"),
+                            "description": .string("auto mode: require math-aware output"),
+                        ]),
+                        "dpi": .object([
+                            "type": .string("number"),
+                            "description": .string("Render DPI for PDF inputs (default 150)"),
+                        ]),
+                        "pages": .object([
+                            "type": .string("string"),
+                            "description": .string("Page spec for PDFs, e.g. \"1-3,7\" (default: all)"),
+                        ]),
+                        "lang": .object([
+                            "type": .string("string"),
+                            "description": .string("Comma-separated language preference, e.g. \"zh-Hant,en\""),
+                        ]),
+                        "converter": .object([
+                            "type": .string("string"),
+                            "description": .string("Force pandoc or macdoc. Forcing disables fallback, because reporting a converter that did not run would be untrue"),
+                        ]),
+                        "overwrite": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Replace existing outputs. Without it, a run that would overwrite anything refuses before any OCR"),
+                        ]),
+                        "async": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Return a job_id immediately; poll ocr_status / ocr_result"),
+                        ]),
+                    ]),
+                ]),
+                annotations: .init(readOnlyHint: false, openWorldHint: false)
+            ),
+            Tool(
                 name: "recommend",
                 description: "Evidence-labelled engine recommendation for a workload: a "
                     + "tier-named ranking citing measured rows when evidence exists, otherwise "
@@ -274,6 +353,8 @@ public actor BestOCRMCPServer {
         switch name {
         case "ocr":
             return try await handleOCR(args)
+        case "pipeline":
+            return try await handlePipeline(args)
         case "consensus":
             return try await handleConsensus(args)
         case "recommend":
@@ -307,6 +388,129 @@ public actor BestOCRMCPServer {
     }
 
     // MARK: - Handlers
+
+
+    private func handlePipeline(_ args: [String: Value]) async throws -> String {
+        // Parsed outside the gate: a bad argument must fail immediately, not
+        // after queueing behind someone else's OCR.
+        var inputs: [String] = []
+        if let single = args["input_path"]?.stringValue, !single.isEmpty {
+            inputs.append(single)
+        }
+        if case .array(let items)? = args["input_paths"] {
+            inputs.append(contentsOf: items.compactMap(\.stringValue))
+        }
+        guard !inputs.isEmpty else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "missing required argument: input_path (or input_paths)")
+        }
+        let format = args["to"]?.stringValue ?? "docx"
+        let outDir = args["out_dir"]?.stringValue
+            ?? OutputPlanner.defaultOutDir(for: URL(fileURLWithPath: inputs[0])).path
+        let engineID = args["engine"]?.stringValue ?? "auto"
+        let priorityRaw = args["priority"]?.stringValue ?? "balanced"
+        guard let priority = WorkloadSpec.Priority(rawValue: priorityRaw) else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "priority must be one of: quality, speed, balanced")
+        }
+        let documentClassRaw = args["document_class"]?.stringValue ?? "unspecified"
+        guard let documentClass = DocumentClass.parse(documentClassRaw) else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "document_class must be one of: "
+                                     + DocumentClass.allCases.map(\.rawValue).joined(separator: ", "))
+        }
+        let forced: FileConverter.Kind? = try args["converter"]?.stringValue.map { raw in
+            guard let kind = FileConverter.Kind(rawValue: raw) else {
+                throw OCREngineError(engine: "mcp",
+                                     message: "converter must be one of: "
+                                         + FileConverter.Kind.allCases.map(\.rawValue).joined(separator: ", "))
+            }
+            return kind
+        }
+        let languages = (args["lang"]?.stringValue ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let dpi = args["dpi"]?.doubleValue ?? 150
+        let pageSpec = args["pages"]?.stringValue ?? ""
+        let docType = args["doc_type"]?.stringValue ?? "unspecified"
+        let needsMath = args["math"]?.boolValue ?? false
+        let overwrite = args["overwrite"]?.boolValue ?? false
+
+        let gate = ocrGate
+        let runLog = self.runLog
+        let evidenceURL = self.evidenceURL
+        let registrySnapshot = registry
+        let capturedInputs = inputs
+        let work: @Sendable () async throws -> String = {
+            try await gate.run {
+                let report = try await PipelineFlow.run(
+                    inputs: capturedInputs, to: format,
+                    outDir: URL(fileURLWithPath: outDir), engineID: engineID,
+                    dpi: dpi, pageSpec: pageSpec, languages: languages,
+                    docType: docType, priority: priority, needsMath: needsMath,
+                    documentClass: documentClass, converter: forced,
+                    overwrite: overwrite, registry: registrySnapshot,
+                    evidence: try EvidenceStore.load(from: evidenceURL),
+                    runLog: runLog)
+                let text = Self.renderPipelineReport(report, registry: registrySnapshot)
+                // A partial batch must not read as success. Throwing carries the
+                // WHOLE report as the error text, so nothing is lost by failing.
+                guard report.failed.isEmpty else {
+                    throw OCREngineError(engine: "pipeline", message: text)
+                }
+                return text
+            }
+        }
+        if args["async"]?.boolValue == true {
+            let id = await jobs.start {
+                do { return try await work() } catch let error as OCREngineError {
+                    throw JobError(error.errorDescription ?? error.message)
+                }
+            }
+            return "job started\njob_id: \(id)\npoll with ocr_status / ocr_result"
+        }
+        return try await work()
+    }
+
+    static func renderPipelineReport(_ report: PipelineReport,
+                                     registry: EngineRegistry) -> String {
+        var lines = ["output directory: \(report.outDir.path)"]
+        for item in report.items {
+            lines.append("")
+            lines.append("── \(URL(fileURLWithPath: item.input).lastPathComponent)")
+            lines.append(contentsOf: item.notices.map { "   ℹ \($0)" })
+            for attempt in item.attempts where attempt.failure != nil {
+                lines.append("   ↷ \(attempt.engineID) skipped: \(attempt.failure!)")
+            }
+            if let engineID = item.engineID {
+                lines.append("   engine: \(engineID)")
+                if let tradeoff = registry.engine(id: engineID)?.tradeoffNote {
+                    lines.append("   tradeoff: \(tradeoff)")
+                }
+            }
+            if let blocks = item.blocks {
+                lines.append("   assembly: \(blocks) block(s) in reading order")
+            }
+            if let load = item.loadSeconds {
+                lines.append("   model load: \(String(format: "%.1f", load))s (excluded from per-page timing)")
+            }
+            if let markdown = item.markdown { lines.append("   markdown: \(markdown.path)") }
+            lines.append(contentsOf: item.converterHops.map { "   ↷ converter \($0)" })
+            if let failure = item.failure {
+                lines.append("   ✗ \(failure)")
+                continue
+            }
+            if let target = item.target { lines.append("   ✓ \(target.path)") }
+            if let converter = item.converter { lines.append("   converter: \(converter)") }
+            if let runID = item.runID {
+                lines.append("   run id: \(runID)  (bestocr evidence ingest \(runID))")
+            }
+        }
+        lines.append("")
+        lines.append("\(report.succeeded.count) succeeded, \(report.failed.count) failed")
+        return lines.joined(separator: "\n")
+    }
 
     private func handleConsensus(_ args: [String: Value]) async throws -> String {
         // Parse outside the gate (same discipline as handleOCR).
