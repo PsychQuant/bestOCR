@@ -123,19 +123,36 @@ public struct AdjudicatorDiagnostics: Sendable, Equatable {
     public let confusion: [String: [String: [String: Double]]]?
     /// `nil` until an adjudicator estimates per-item latent parameters.
     public let itemParameters: [ItemParameterEntry]?
+    /// A competence prior the adjudicator was **given** rather than estimated.
+    /// Deliberately separate from `overallCompetence`: reporting an input as an
+    /// estimate would claim a measurement the model never made.
+    ///
+    /// Note (#17 §4.3): the spec predicted the closed-set cost would first bite
+    /// at phase 4 (IRT). It bit at phase 3 — a prior is a genuinely new kind of
+    /// quantity, so it needed a genuinely new field. The prediction was right
+    /// about the mechanism and wrong about the timing; recorded rather than
+    /// quietly patched, since it is evidence for revisiting the closed set.
+    public let priorCompetence: [String: Double]?
+    /// Engines whose prior was assumed rather than measured — nameable so a
+    /// report can disclose which weights rest on an assumption.
+    public let assumedPriorEngines: [String]?
 
     public init(overallCompetence: [String: Double]? = nil,
                 competence: [String: [ItemKind: Double]]? = nil,
                 iterations: Int? = nil,
                 converged: Bool? = nil,
                 confusion: [String: [String: [String: Double]]]? = nil,
-                itemParameters: [ItemParameterEntry]? = nil) {
+                itemParameters: [ItemParameterEntry]? = nil,
+                priorCompetence: [String: Double]? = nil,
+                assumedPriorEngines: [String]? = nil) {
         self.overallCompetence = overallCompetence
         self.competence = competence
         self.iterations = iterations
         self.converged = converged
         self.confusion = confusion
         self.itemParameters = itemParameters
+        self.priorCompetence = priorCompetence
+        self.assumedPriorEngines = assumedPriorEngines
     }
 }
 

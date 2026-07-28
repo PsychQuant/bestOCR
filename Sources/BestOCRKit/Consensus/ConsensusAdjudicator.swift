@@ -14,11 +14,53 @@ public protocol ConsensusAdjudicator: Sendable {
     /// report, so a consensus number can never be read without knowing which
     /// model produced it.
     static var id: String { get }
+    /// One line on when this model fits — surfaced by
+    /// `bestocr consensus --list-adjudicators` (#17 phase 6). Deliberately a
+    /// tradeoff sentence, never a rank: these models estimate different things,
+    /// so "best" is not a property any of them has.
+    static var guidance: String { get }
     func adjudicate(items: [AlignedItem]) -> ConsensusEstimate
 }
 
 public extension ConsensusAdjudicator {
     var id: String { Self.id }
+}
+
+/// Plumbing every adjudicator shares — in one place so that verdict
+/// differences between adjudicators can only come from their **models**, never
+/// from divergent filtering / representative / diagnostic conventions.
+enum ConsensusShared {
+    /// Items with at least one REAL response. Positional placeholders (empty
+    /// canonical, e.g. empty table cells) keep their alignment slot but never
+    /// vote (#13).
+    static func votable(_ items: [AlignedItem]) -> [AlignedItem] {
+        items.filter { $0.responses.values.contains { !$0.canonical.isEmpty } }
+    }
+
+    /// Engines with at least one real response — an engine that only ever
+    /// produced placeholders must not appear in diagnostics with prior-only
+    /// values (#13).
+    static func realEngines(_ items: [AlignedItem]) -> [String] {
+        Set(items.flatMap { item in
+            item.responses.filter { !$0.value.canonical.isEmpty }.map(\.key)
+        }).sorted()
+    }
+
+    /// Deterministic raw representative of a winning canonical label.
+    static func representative(item: AlignedItem, label: String) -> String {
+        item.responses.values
+            .filter { $0.canonical == label }.map(\.raw)
+            .min { $0.utf8.lexicographicallyPrecedes($1.utf8) } ?? label
+    }
+
+    /// Pairwise raw agreement over co-answered items. Adjudicator-independent
+    /// by construction (raw responses only), so it stays comparable across
+    /// models — and it stays what it is: a correlated-error DIAGNOSTIC, never
+    /// a correction (#17 §8).
+    static func agreementMatrix(items: [AlignedItem],
+                                engines: [String]) -> [String: [String: Double]] {
+        ConsensusEstimator.agreementMatrix(items: items, engines: engines)
+    }
 }
 
 /// Naive majority — the **control**, not a formality.
@@ -33,16 +75,17 @@ public extension ConsensusAdjudicator {
 /// models' `low_consensus_share` differ only by the adjudication itself.
 public struct MajorityAdjudicator: ConsensusAdjudicator {
     public static let id = "majority"
+    public static let guidance =
+        "control / baseline. No competence, no assumptions. Use it to check whether "
+        + "the competence-weighted models actually earn their complexity on your corpus." 
     public init() {}
 
     public func adjudicate(items allItems: [AlignedItem]) -> ConsensusEstimate {
         // Same abstention rule as ds-lite: positional placeholders (empty
         // canonical, e.g. empty table cells) hold their alignment slot but
         // never vote.
-        let items = allItems.filter { $0.responses.values.contains { !$0.canonical.isEmpty } }
-        let engines = Set(items.flatMap { item in
-            item.responses.filter { !$0.value.canonical.isEmpty }.map(\.key)
-        }).sorted()
+        let items = ConsensusShared.votable(allItems)
+        let engines = ConsensusShared.realEngines(items)
 
         var verdicts: [ItemConsensus] = []
         for item in items {
@@ -55,13 +98,9 @@ public struct MajorityAdjudicator: ConsensusAdjudicator {
             let top = ranked[0]
             let total = tally.values.reduce(0, +)
             let topTie = ranked.count > 1 && ranked[1].value == top.value
-            let representative = item.responses.values
-                .filter { $0.canonical == top.key }.map(\.raw)
-                .min { $0.utf8.lexicographicallyPrecedes($1.utf8) } ?? top.key
-
             verdicts.append(ItemConsensus(
                 key: item.key,
-                consensusText: representative,
+                consensusText: ConsensusShared.representative(item: item, label: top.key),
                 confidence: total > 0 ? Double(top.value) / Double(total) : 0,
                 lowConsensus: topTie || top.value < 2,
                 responses: item.responses.mapValues(\.raw)))
@@ -72,7 +111,7 @@ public struct MajorityAdjudicator: ConsensusAdjudicator {
             items: verdicts,
             // Raw-response diagnostic — adjudicator-independent by construction,
             // so it stays comparable across every model.
-            agreement: ConsensusEstimator.agreementMatrix(items: items, engines: engines),
+            agreement: ConsensusShared.agreementMatrix(items: items, engines: engines),
             // Every field nil: majority has no competence, no iteration, no
             // convergence, no confusion model. This is the point.
             diagnostics: AdjudicatorDiagnostics())
@@ -84,6 +123,10 @@ public struct MajorityAdjudicator: ConsensusAdjudicator {
 /// model computes.
 public struct DawidSkeneLiteAdjudicator: ConsensusAdjudicator {
     public static let id = "ds-lite"
+    public static let guidance =
+        "default. Competence estimated from within-item agreement; good with 3+ engines "
+        + "that fail independently. Blind to HOW an engine errs, and a colluding pair can "
+        + "dominate it." 
     public let maxIterations: Int
 
     public init(maxIterations: Int = 20) { self.maxIterations = maxIterations }
@@ -98,7 +141,10 @@ public enum AdjudicatorRegistry {
     /// Registration order is the display order; `ds-lite` stays first because
     /// it is the default and changing that silently would change every
     /// consensus artifact's meaning.
-    public static let allIDs: [String] = [DawidSkeneLiteAdjudicator.id, MajorityAdjudicator.id]
+    public static let allIDs: [String] = [DawidSkeneLiteAdjudicator.id,
+                                          MajorityAdjudicator.id,
+                                          FullDawidSkeneAdjudicator.id,
+                                          PriorWeightedAdjudicator.id]
 
     /// `nil` for an unknown id — callers MUST surface that rather than falling
     /// back to a default, or a typo would silently run a different model and
@@ -107,10 +153,25 @@ public enum AdjudicatorRegistry {
         switch id {
         case DawidSkeneLiteAdjudicator.id: return DawidSkeneLiteAdjudicator()
         case MajorityAdjudicator.id:       return MajorityAdjudicator()
+        case FullDawidSkeneAdjudicator.id: return FullDawidSkeneAdjudicator()
+        // Built with a neutral prior; `ConsensusPipeline` replaces it with an
+        // evidence-derived one when a store is available (phase 3).
+        case PriorWeightedAdjudicator.id:  return PriorWeightedAdjudicator(prior: [:])
         default:                           return nil
         }
     }
 
     /// The default preserves pre-#17 behaviour exactly.
     public static var `default`: any ConsensusAdjudicator { DawidSkeneLiteAdjudicator() }
+
+    /// `(id, guidance)` for every adjudicator, in display order. Phase 6: the
+    /// selection surface states tradeoffs and never ranks — a single ordering
+    /// would imply these models measure the same thing, which is exactly the
+    /// claim #17 exists to refuse.
+    public static var catalogue: [(id: String, guidance: String)] {
+        [(DawidSkeneLiteAdjudicator.id, DawidSkeneLiteAdjudicator.guidance),
+         (MajorityAdjudicator.id, MajorityAdjudicator.guidance),
+         (FullDawidSkeneAdjudicator.id, FullDawidSkeneAdjudicator.guidance),
+         (PriorWeightedAdjudicator.id, PriorWeightedAdjudicator.guidance)]
+    }
 }

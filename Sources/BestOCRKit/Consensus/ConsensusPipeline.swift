@@ -93,7 +93,17 @@ public enum ConsensusPipeline {
     public static func execute(inputPath: String, engineIDs: [String], dpi: Double,
                                pageSpec: String, languages: [String], docType: String,
                                outDir: URL, registry: EngineRegistry,
-                               runLog: RunLog) async throws -> ConsensusRunSummary {
+                               runLog: RunLog,
+                               adjudicatorID: String = DawidSkeneLiteAdjudicator.id)
+        async throws -> ConsensusRunSummary {
+        // Unknown id is a hard error, never a silent fallback: running a
+        // different model under the requested one's estimand name is exactly
+        // the mislabelling #17 exists to prevent.
+        guard var adjudicator = AdjudicatorRegistry.make(adjudicatorID) else {
+            throw OCREngineError(engine: "consensus",
+                                 message: "unknown adjudicator '\(adjudicatorID)' — available: "
+                                     + AdjudicatorRegistry.allIDs.joined(separator: ", "))
+        }
         guard dpi.isFinite, dpi > 0 else {
             throw OCREngineError(engine: "consensus",
                                  message: "dpi must be a finite positive number (got \(dpi))")
@@ -165,7 +175,15 @@ public enum ConsensusPipeline {
                                  message: "fewer than 2 engines produced output — \(trail)")
         }
 
-        let estimate = adjudicate(results: results)
+        // Phase 3: the prior-weighted model needs a prior built from measured
+        // rows for the engines that actually ran.
+        if adjudicatorID == PriorWeightedAdjudicator.id {
+            let store = (try? EvidenceStore.load(from: EvidenceStore.defaultURL()))
+                ?? EvidenceStore(rows: [])
+            adjudicator = PriorWeightedAdjudicator.fromEvidence(store,
+                                                                engineIDs: results.keys.sorted())
+        }
+        let estimate = adjudicate(results: results, adjudicator: adjudicator)
         // Two OCRResults are not two effective informants: without a single
         // item co-answered with REAL content (empty placeholders abstain)
         // there is no consensus to report.

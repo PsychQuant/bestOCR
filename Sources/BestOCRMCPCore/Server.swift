@@ -223,7 +223,8 @@ public actor BestOCRMCPServer {
                 name: "consensus",
                 description: "Multi-engine consensus OCR: run several engines over the same "
                     + "input, align items (line-primary, table cells split), adjudicate with "
-                    + "a Dawid-Skene-lite estimator. Writes <stem>.consensus.md (⚠ marks "
+                    + "a selectable estimator (see `adjudicator`; Dawid-Skene-lite by "
+                    + "default). Writes <stem>.consensus.md (⚠ marks "
                     + "low-consensus items) + <stem>.consensus.json (per-engine competence, "
                     + "low-consensus review list). Long documents: pass async=true, then "
                     + "poll ocr_status / ocr_result.",
@@ -237,6 +238,10 @@ public actor BestOCRMCPServer {
                         "engines": .object([
                             "type": .string("string"),
                             "description": .string("Comma-separated engine ids (default: every available local engine; needs ≥2)"),
+                        ]),
+                        "adjudicator": .object([
+                            "type": .string("string"),
+                            "description": .string("ds-lite (default) | majority (control, no competence) | ds-full (directional character confusion; for systematic 0/O-type errors) | prior-weighted (competence from measured word_recall rows). These estimate DIFFERENT things — their outputs are distinct estimands and must never be cross-ranked."),
                         ]),
                         "out_dir": .object([
                             "type": .string("string"),
@@ -530,6 +535,10 @@ public actor BestOCRMCPServer {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
 
+        // Unknown ids fail loud inside the pipeline rather than defaulting —
+        // a silent fallback would label another model's output with the
+        // requested one's estimand name (#17).
+        let adjudicatorID = args["adjudicator"]?.stringValue ?? "ds-lite"
         let gate = ocrGate
         let registrySnapshot = registry
         let runLogSnapshot = runLog
@@ -547,7 +556,7 @@ public actor BestOCRMCPServer {
                     inputPath: inputPath, engineIDs: ids, dpi: dpi, pageSpec: pageSpec,
                     languages: languages, docType: docType,
                     outDir: URL(fileURLWithPath: outDir), registry: registrySnapshot,
-                    runLog: runLogSnapshot)
+                    runLog: runLogSnapshot, adjudicatorID: adjudicatorID)
                 return Self.renderConsensusSummary(summary)
             }
         }
