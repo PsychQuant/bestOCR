@@ -37,6 +37,7 @@ public struct DocumentPipelineEngine: OCREngine {
 
     public var id: String { "doc.\(tool)" }
     public let family = EngineFamily.documentPipeline
+    public var tradeoffNote: String? { tradeoff }
 
     /// Assembly runs are minutes, not seconds — a per-page-style timeout would
     /// kill legitimate work. `BESTOCR_DOC_TIMEOUT` (seconds) overrides.

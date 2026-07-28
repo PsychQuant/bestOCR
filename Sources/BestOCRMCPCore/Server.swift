@@ -90,6 +90,10 @@ public actor BestOCRMCPServer {
                             "type": .string("string"),
                             "description": .string("Workload label for the condition tuple (math_pdf / scanned_doc / screenshot / …)"),
                         ]),
+                        "document_class": .object([
+                            "type": .string("string"),
+                            "description": .string("Structural class: unspecified (default) | single_column | multi_column | tabular | mixed. The last three restrict candidates to document-assembly engines (doc.*), which resolve reading order but are substantially slower than per-page transcription"),
+                        ]),
                         "model": .object([
                             "type": .string("string"),
                             "description": .string("VLM model-tag override (vlm.* engines only), e.g. glm-ocr-anova:q4_K_M"),
@@ -126,6 +130,10 @@ public actor BestOCRMCPServer {
                         "math": .object([
                             "type": .string("boolean"),
                             "description": .string("Require math-aware output (math_markdown engines only)"),
+                        ]),
+                        "document_class": .object([
+                            "type": .string("string"),
+                            "description": .string("Structural class: unspecified (default) | single_column | multi_column | tabular | mixed. The last three restrict candidates to document-assembly engines (doc.*), which resolve reading order but are substantially slower than per-page transcription"),
                         ]),
                     ]),
                     "required": .array([.string("doc_type")]),
@@ -403,6 +411,12 @@ public actor BestOCRMCPServer {
                                  message: "priority must be one of: quality, speed, balanced")
         }
         let needsMath = args["math"]?.boolValue ?? false
+        let documentClassRaw = args["document_class"]?.stringValue ?? "unspecified"
+        guard let documentClass = DocumentClass.parse(documentClassRaw) else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "document_class must be one of: "
+                                     + DocumentClass.allCases.map(\.rawValue).joined(separator: ", "))
+        }
         let gate = ocrGate
         let runLog = self.runLog
         let evidenceURL = self.evidenceURL
@@ -416,6 +430,7 @@ public actor BestOCRMCPServer {
                         inputPath: inputPath, dpi: dpi, pageSpec: pageSpec,
                         languages: languages, docType: docType,
                         priority: priority, needsMath: needsMath,
+                        documentClass: documentClass,
                         outDir: URL(fileURLWithPath: outDir),
                         registry: registrySnapshot, evidence: evidence, runLog: runLog)
                 } else {
@@ -425,7 +440,9 @@ public actor BestOCRMCPServer {
                         outDir: URL(fileURLWithPath: outDir),
                         registry: registrySnapshot, runLog: runLog)
                 }
-                return Self.renderRunSummary(summary: summary)
+                return Self.renderRunSummary(
+                    summary: summary,
+                    tradeoff: registrySnapshot.engine(id: summary.result.engineID)?.tradeoffNote)
             }
         }
         if args["async"]?.boolValue == true {
@@ -450,9 +467,16 @@ public actor BestOCRMCPServer {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        let documentClassRaw = args["document_class"]?.stringValue ?? "unspecified"
+        guard let documentClass = DocumentClass.parse(documentClassRaw) else {
+            throw OCREngineError(engine: "mcp",
+                                 message: "document_class must be one of: "
+                                     + DocumentClass.allCases.map(\.rawValue).joined(separator: ", "))
+        }
         let workload = WorkloadSpec(docType: docType, languages: languages,
                                     priority: priority,
-                                    needsMath: args["math"]?.boolValue ?? false)
+                                    needsMath: args["math"]?.boolValue ?? false,
+                                    documentClass: documentClass)
         let evidence = try EvidenceStore.load(from: evidenceURL)
         let answer = Recommender.recommend(workload: workload, registry: registry,
                                            evidence: evidence)
@@ -463,8 +487,15 @@ public actor BestOCRMCPServer {
         case .evidencePending:
             lines.append("EVIDENCE-PENDING — no measured rows for this workload; this is a capability filter, not a ranking.")
         }
+        if documentClass.requiresAssembly {
+            lines.append("document-class \(documentClass.rawValue): candidates restricted to "
+                + "document-assembly engines (slower than per-page — see each tradeoff).")
+        }
         for (index, entry) in answer.entries.enumerated() {
             lines.append("  \(index + 1). \(entry.engineID) — \(entry.note)")
+        }
+        if answer.entries.isEmpty {
+            lines.append("  (no engine satisfies this workload — nothing is being substituted for one that would)")
         }
         if !answer.citations.isEmpty {
             lines.append("evidence rows used: \(answer.citations.joined(separator: "; "))")
@@ -475,7 +506,7 @@ public actor BestOCRMCPServer {
     private func handleListEngines() async -> String {
         let probed = await registry.probeAll()
         let idWidth = max(probed.map { $0.engine.id.count }.max() ?? 0, 6)
-        var lines = ["\("ENGINE".padding(toLength: idWidth, withPad: " ", startingAt: 0))  FAMILY           OUTPUT         STATUS"]
+        var lines = ["\("ENGINE".padding(toLength: idWidth, withPad: " ", startingAt: 0))  FAMILY             OUTPUT         ASSEMBLY       STATUS"]
         for (engine, availability) in probed {
             let status: String
             switch availability {
@@ -485,9 +516,13 @@ public actor BestOCRMCPServer {
                 status = "✗ \(reason)" + (hint.map { " — install: \($0)" } ?? "")
             }
             let id = engine.id.padding(toLength: idWidth, withPad: " ", startingAt: 0)
-            let family = engine.family.rawValue.padding(toLength: 15, withPad: " ", startingAt: 0)
+            let family = engine.family.rawValue.padding(toLength: 17, withPad: " ", startingAt: 0)
             let output = engine.capabilities.outputLevel.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
-            lines.append("\(id)  \(family)  \(output)  \(status)")
+            let assembly = engine.capabilities.assembly.rawValue.padding(toLength: 13, withPad: " ", startingAt: 0)
+            lines.append("\(id)  \(family)  \(output)  \(assembly)  \(status)")
+            if let tradeoff = engine.tradeoffNote {
+                lines.append("\(String(repeating: " ", count: idWidth))  ↳ tradeoff: \(tradeoff)")
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -503,10 +538,12 @@ public actor BestOCRMCPServer {
         return lines.joined(separator: "\n")
     }
 
-    static func renderRunSummary(summary: RunSummary) -> String {
+    static func renderRunSummary(summary: RunSummary, tradeoff: String? = nil) -> String {
         let pageCount = summary.result.pages.count
         let total = summary.result.pages.map(\.seconds).reduce(0, +)
         var lines: [String] = []
+        // Routing notices explain which candidate list the trail below came from.
+        lines.append(contentsOf: summary.notices.map { "ℹ \($0)" })
         // Fallback trail (auto mode) — every hop visible, never silent.
         for attempt in summary.attempts where attempt.failure != nil {
             lines.append("↷ \(attempt.engineID) skipped: \(attempt.failure!)")
@@ -516,6 +553,14 @@ public actor BestOCRMCPServer {
             "markdown: \(summary.outputMarkdown.path)",
             "meta: \(summary.outputMeta.path)",
         ])
+        if let structure = summary.result.document {
+            lines.append("assembly: \(structure.blocks.count) block(s) in reading order")
+            if let load = structure.loadSeconds {
+                // Warm-model estimand: load is NOT inside the per-page times.
+                lines.append("model load: \(String(format: "%.1f", load))s (excluded from per-page timing)")
+            }
+        }
+        if let tradeoff { lines.append("tradeoff: \(tradeoff)") }
         if summary.result.pages.contains(where: \.degenerateFlagged) {
             lines.append("⚠ repetition guard tripped on at least one page — inspect the output")
         }

@@ -90,7 +90,20 @@ public protocol OCREngine: Sendable {
     var id: String { get }
     var family: EngineFamily { get }
     var capabilities: EngineCapabilities { get }
+    /// A cost or caveat that must travel with the engine wherever it is offered
+    /// — `list-engines`, `recommend`, and the chosen-engine line of a run.
+    /// `nil` for engines with no surprising tradeoff.
+    ///
+    /// Declared as a requirement (not only an extension member) so that a
+    /// concrete engine's override is actually reached through `any OCREngine`;
+    /// as an extension-only member it would statically dispatch to the default
+    /// and silently hide every label.
+    var tradeoffNote: String? { get }
     /// Probes lazily and never throws — absence is reported as a value.
     func probe() async -> EngineAvailability
     func recognize(_ request: OCRRequest) async throws -> OCRResult
+}
+
+extension OCREngine {
+    public var tradeoffNote: String? { nil }
 }
