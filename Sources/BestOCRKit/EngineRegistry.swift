@@ -7,9 +7,12 @@ public struct EngineRegistry: Sendable {
         self.engines = engines
     }
 
-    /// M4 roster: classical (Vision, tesseract, external Python tools), one
-    /// VLM engine per admitted profile, then the cloud reference tier
-    /// (probe-gated by API-key env; never ranked by recommend).
+    /// Roster: classical (Vision, tesseract, external Python tools), one VLM
+    /// engine per admitted profile, the document-assembly pipelines, then the
+    /// cloud reference tier (probe-gated by API-key env; never ranked by
+    /// recommend). Assembly engines sit after the per-page ones so the existing
+    /// relative order — which is also the evidence-pending listing order — is
+    /// unchanged by their arrival.
     public static func standard(ollamaHost: String = "localhost:11434") -> EngineRegistry {
         var engines: [any OCREngine] = [
             VisionEngine(), TesseractEngine(),
@@ -18,6 +21,9 @@ public struct EngineRegistry: Sendable {
         engines.append(contentsOf: ModelProfile.all.map {
             VLMEngine(profile: $0, host: ollamaHost)
         })
+        engines.append(contentsOf: [
+            DocumentPipelineEngine.paddleOCRPipeline(), DocumentPipelineEngine.marker(),
+        ])
         engines.append(contentsOf: CloudProvider.allCases.map {
             CloudReferenceEngine(provider: $0)
         })

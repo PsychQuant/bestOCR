@@ -20,7 +20,7 @@ struct EvidenceIngestTests {
         let rows = EvidenceIngest.rows(from: entry(seconds: [1.0, 3.0]))
         #expect(rows.count == 1)
         let row = rows[0]
-        #expect(row.estimand == "speed.ms_per_page")
+        #expect(row.estimand == "speed.ms_per_page@v1")   // schema.md §2 versioned form
         #expect(row.value == 2000)
         #expect(row.tier == "T2")
         #expect(row.source.hasPrefix("runlog:"))
@@ -66,7 +66,7 @@ struct EvidenceIngestTests {
 
     @Test func entryWithoutQualityStatYieldsSpeedRowOnly() {
         let rows = EvidenceIngest.rows(from: entry(seconds: [1.0]))
-        #expect(rows.map(\.estimand) == ["speed.ms_per_page"])
+        #expect(rows.map(\.estimand) == ["speed.ms_per_page@v1"])
     }
 
     @Test func appendWritesLoadableRows() throws {
@@ -76,6 +76,6 @@ struct EvidenceIngestTests {
         try EvidenceIngest.append(EvidenceIngest.rows(from: entry(seconds: [2.5])), to: file)
         let store = try EvidenceStore.load(from: file)
         #expect(store.rows.count == 2)
-        #expect(store.rows.allSatisfy { $0.estimand == "speed.ms_per_page" })
+        #expect(store.rows.allSatisfy { $0.estimand == "speed.ms_per_page@v1" })
     }
 }

@@ -70,16 +70,24 @@ public struct ConditionTuple: Sendable, Codable {
     }
 }
 
-/// Unified engine output (spec §5.3): pages + condition tuple.
+/// Unified engine output (spec §5.3): pages + condition tuple, plus the
+/// optional document structure an assembly engine produces.
 public struct OCRResult: Sendable, Codable {
     public let engineID: String
     public let pages: [PageResult]
     public let condition: ConditionTuple
+    /// Non-nil only for engines whose `capabilities.assembly != .none`
+    /// (document-assembly spec §4.2). Per-page engines leave it nil and lose
+    /// nothing; being optional is also what keeps every already-archived
+    /// `*.meta.json` decodable.
+    public let document: DocumentStructure?
 
-    public init(engineID: String, pages: [PageResult], condition: ConditionTuple) {
+    public init(engineID: String, pages: [PageResult], condition: ConditionTuple,
+                document: DocumentStructure? = nil) {
         self.engineID = engineID
         self.pages = pages
         self.condition = condition
+        self.document = document
     }
 
     /// All page text joined; not encoded (derived).

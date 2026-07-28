@@ -26,7 +26,7 @@ public enum EvidenceIngest {
             : thermalCaveat
         var rows = [
             EvidenceRow(estimand: isConsensus ? "speed.ensemble_ms_per_page@v1"
-                                              : "speed.ms_per_page",
+                                              : Estimand.canonical("speed.ms_per_page"),
                         value: (meanSeconds * 1000).rounded(),
                         condition: entry.condition,
                         tier: "T2",
@@ -40,7 +40,7 @@ public enum EvidenceIngest {
             let caveat = isConsensus
                 ? "reference = \(quality.reference) — consensus-internal diagnostic, not ground truth; not comparable to word_recall"
                 : "reference = \(quality.reference) — a cloud model output, not ground truth; not comparable to word_recall"
-            rows.append(EvidenceRow(estimand: quality.estimand,
+            rows.append(EvidenceRow(estimand: Estimand.canonical(quality.estimand),
                                     value: quality.value,
                                     condition: entry.condition,
                                     tier: "T2",

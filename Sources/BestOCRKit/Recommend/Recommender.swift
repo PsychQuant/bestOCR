@@ -78,7 +78,12 @@ public enum Recommender {
         var wanted = estimands(for: workload.priority)[0]
         var usable: [EvidenceRow] = []
         for preference in estimands(for: workload.priority) {
-            let matching = docRows.filter { $0.estimand == preference.name && $0.tier != "T3" }
+            // Compared canonically so a legacy unversioned row and a freshly
+            // ingested `@v1` row are the same estimand (schema.md §2 compat).
+            let wantedName = Estimand.canonical(preference.name)
+            let matching = docRows.filter {
+                Estimand.canonical($0.estimand) == wantedName && $0.tier != "T3"
+            }
                 .filter { candidateKeys.contains(baseModel($0.condition.model)) }
             if !matching.isEmpty {
                 wanted = preference
@@ -128,7 +133,7 @@ public enum Recommender {
         var entries = ranked.map { pair in
             Recommendation.Entry(
                 engineID: pair.engine.id,
-                note: "\(wanted.name) = \(pair.row.value) (\(tier), \(pair.row.source))"
+                note: "\(Estimand.canonical(wanted.name)) = \(pair.row.value) (\(tier), \(pair.row.source))"
                     + (pair.row.caveat.map { " — caveat: \($0)" } ?? ""))
         }
         // Other-tier evidence is surfaced but never mixed into the ranking.
