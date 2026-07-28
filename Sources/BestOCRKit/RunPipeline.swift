@@ -28,7 +28,8 @@ public enum RunPipeline {
     /// fallback chain to auto mode).
     public static func execute(inputPath: String, engineID: String, dpi: Double,
                                pageSpec: String, languages: [String], docType: String,
-                               outDir: URL, registry: EngineRegistry,
+                               outDir: URL, outputStem: String? = nil,
+                               registry: EngineRegistry,
                                runLog: RunLog) async throws -> RunSummary {
         guard let engine = registry.engine(id: engineID) else {
             let valid = registry.engines.map(\.id).joined(separator: ", ")
@@ -49,7 +50,7 @@ public enum RunPipeline {
                                  dpi: normalized.dpi, docType: docType)
         let result = try await engine.recognize(request)
         return try writeOutputs(result: result, inputPath: inputPath, outDir: outDir,
-                                runLog: runLog,
+                                outputStem: outputStem, runLog: runLog,
                                 attempts: [RunSummary.Attempt(engineID: engineID, failure: nil)])
     }
 
@@ -59,7 +60,8 @@ public enum RunPipeline {
                                    languages: [String], docType: String,
                                    priority: WorkloadSpec.Priority, needsMath: Bool,
                                    documentClass: DocumentClass = .unspecified,
-                                   outDir: URL, registry: EngineRegistry,
+                                   outDir: URL, outputStem: String? = nil,
+                                   registry: EngineRegistry,
                                    evidence: EvidenceStore,
                                    runLog: RunLog) async throws -> RunSummary {
         let selection = AutoRouter.candidates(docType: docType, languages: languages,
@@ -88,7 +90,8 @@ public enum RunPipeline {
                 let result = try await engine.recognize(request)
                 attempts.append(.init(engineID: candidateID, failure: nil))
                 return try writeOutputs(result: result, inputPath: inputPath,
-                                        outDir: outDir, runLog: runLog, attempts: attempts,
+                                        outDir: outDir, outputStem: outputStem,
+                                        runLog: runLog, attempts: attempts,
                                         notices: [selection.notice].compactMap { $0 })
             } catch let error as OCREngineError {
                 attempts.append(.init(engineID: candidateID,
@@ -105,11 +108,15 @@ public enum RunPipeline {
     }
 
     /// Shared output path so explicit and auto runs can never diverge.
+    /// `outputStem` lets a caller name the artifacts (the pipeline disambiguates
+    /// colliding stems across a batch); nil keeps the input's own stem.
     private static func writeOutputs(result: OCRResult, inputPath: String, outDir: URL,
+                                     outputStem: String? = nil,
                                      runLog: RunLog, attempts: [RunSummary.Attempt],
                                      notices: [String] = []) throws -> RunSummary {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-        let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+        let stem = outputStem
+            ?? URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
         let mdURL = outDir.appendingPathComponent("\(stem).md")
         let combined = result.pages.map(\.text).joined(separator: "\n\n---\n\n")
         try combined.write(to: mdURL, atomically: true, encoding: .utf8)
