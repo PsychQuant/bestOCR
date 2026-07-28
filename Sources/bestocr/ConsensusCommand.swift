@@ -59,9 +59,17 @@ struct Consensus: AsyncParsableCommand {
             print("skipped: \(id) — \(reason)")
         }
         let est = summary.estimate
-        print("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus) — \(est.iterations) iterations")
-        for (id, c) in est.overallCompetence.sorted(by: { $0.value > $1.value }) {
-            print(String(format: "competence: %@ %.3f", id, c))
+        print("adjudicator: \(est.adjudicator)")
+        let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
+        print("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus)\(rounds)")
+        // nil = this adjudicator has no competence notion; say so rather than
+        // printing an empty list that reads like "everyone scored nothing" (#17).
+        if let competence = est.diagnostics.overallCompetence {
+            for (id, c) in competence.sorted(by: { $0.value > $1.value }) {
+                print(String(format: "competence: %@ %.3f", id, c))
+            }
+        } else {
+            print("competence: n/a — \(est.adjudicator) has no competence model")
         }
         print("transcript: \(summary.outputMarkdown.path)")
         print("report: \(summary.outputReport.path)")

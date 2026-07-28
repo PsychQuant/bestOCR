@@ -35,8 +35,10 @@ public enum ConsensusEstimator {
         // alignment slot but never vote (#13 verify).
         let items = allItems.filter { $0.responses.values.contains { !$0.canonical.isEmpty } }
         guard !items.isEmpty else {
-            return ConsensusEstimate(items: [], overallCompetence: [:], competence: [:],
-                                     agreement: [:], iterations: 0, converged: true)
+            return ConsensusEstimate(
+                adjudicator: DawidSkeneLiteAdjudicator.id, items: [], agreement: [:],
+                diagnostics: AdjudicatorDiagnostics(overallCompetence: [:], competence: [:],
+                                                    iterations: 0, converged: true))
         }
 
         // Metric identity requires at least one REAL response — an engine
@@ -129,12 +131,18 @@ public enum ConsensusEstimator {
             overall[engine] = Double(correct + 1) / Double(n + 2)
         }
 
-        return ConsensusEstimate(items: verdicts,
-                                 overallCompetence: overall,
-                                 competence: perKind,
-                                 agreement: agreementMatrix(items: items, engines: engines),
-                                 iterations: iterations,
-                                 converged: converged)
+        return ConsensusEstimate(
+            adjudicator: DawidSkeneLiteAdjudicator.id,
+            items: verdicts,
+            agreement: agreementMatrix(items: items, engines: engines),
+            // Every field non-nil: this model HAS all four notions. An empty
+            // `competence` here means "nothing qualified", which is a
+            // different statement from majority's `nil` (#17).
+            diagnostics: AdjudicatorDiagnostics(overallCompetence: overall,
+                                                competence: perKind,
+                                                iterations: iterations,
+                                                converged: converged,
+                                                confusion: nil))
     }
 
     // MARK: - Internals
@@ -209,7 +217,11 @@ public enum ConsensusEstimator {
     /// Pairwise raw agreement over co-answered items — the independence
     /// diagnostic. Symmetric by construction; pairs with no co-answered
     /// items get no entry.
-    private static func agreementMatrix(items: [AlignedItem],
+    /// Pairwise raw agreement over co-answered items. Internal (not private)
+    /// because it is an adjudicator-INDEPENDENT diagnostic computed from raw
+    /// responses — every adjudicator reports the same matrix, so it lives once
+    /// here rather than being reimplemented per model (#17).
+    static func agreementMatrix(items: [AlignedItem],
                                         engines: [String]) -> [String: [String: Double]] {
         var out: [String: [String: Double]] = [:]
         for a in engines {
