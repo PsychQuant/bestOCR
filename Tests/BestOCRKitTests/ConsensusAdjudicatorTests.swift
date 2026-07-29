@@ -142,9 +142,20 @@ struct ConsensusAdjudicatorTests {
         let ids = AdjudicatorRegistry.allIDs
         #expect(ids.contains("ds-lite") && ids.contains("majority"))
         #expect(Set(ids).count == ids.count, "ids must be unique")
+        // Every advertised id must be buildable — but sequence adjudicators
+        // resolve through `makeSequence`, because they consume a confusion
+        // network rather than aligned items. The registry keeps the two
+        // separate instead of erasing a real protocol difference.
         for id in ids {
-            #expect(AdjudicatorRegistry.make(id)?.id == id)
+            #expect(AdjudicatorRegistry.isKnown(id), "\(id) is advertised but not buildable")
+            if AdjudicatorRegistry.isSequenceAdjudicator(id) {
+                #expect(AdjudicatorRegistry.make(id) == nil, "\(id) must not resolve as an item adjudicator")
+                #expect(type(of: AdjudicatorRegistry.makeSequence(id)!).id == id)
+            } else {
+                #expect(AdjudicatorRegistry.make(id)?.id == id)
+            }
         }
+        #expect(!AdjudicatorRegistry.isKnown("no-such-adjudicator"))
         #expect(AdjudicatorRegistry.make("no-such-adjudicator") == nil)
     }
 }

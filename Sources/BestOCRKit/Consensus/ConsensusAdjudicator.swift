@@ -144,7 +144,9 @@ public enum AdjudicatorRegistry {
     public static let allIDs: [String] = [DawidSkeneLiteAdjudicator.id,
                                           MajorityAdjudicator.id,
                                           FullDawidSkeneAdjudicator.id,
-                                          PriorWeightedAdjudicator.id]
+                                          PriorWeightedAdjudicator.id,
+                                          IRTAdjudicator.id,
+                                          ROVERAdjudicator.id]
 
     /// `nil` for an unknown id — callers MUST surface that rather than falling
     /// back to a default, or a typo would silently run a different model and
@@ -157,12 +159,34 @@ public enum AdjudicatorRegistry {
         // Built with a neutral prior; `ConsensusPipeline` replaces it with an
         // evidence-derived one when a store is available (phase 3).
         case PriorWeightedAdjudicator.id:  return PriorWeightedAdjudicator(prior: [:])
+        case IRTAdjudicator.id:            return IRTAdjudicator()
         default:                           return nil
         }
     }
 
     /// The default preserves pre-#17 behaviour exactly.
     public static var `default`: any ConsensusAdjudicator { DawidSkeneLiteAdjudicator() }
+
+    /// ROVER adjudicates a `ConfusionNetwork`, not `[AlignedItem]` — the
+    /// pipeline must build a different input for it. Callers ask here rather
+    /// than string-matching the id at each site.
+    public static func isSequenceAdjudicator(_ id: String) -> Bool {
+        id == ROVERAdjudicator.id
+    }
+
+    /// Sequence adjudicators resolve here, not through `make` — they are a
+    /// different protocol because they consume a different input, and a
+    /// registry that erased that would be lying about the contract.
+    /// `nil` for an item adjudicator, symmetrically with `make`.
+    public static func makeSequence(_ id: String) -> (any SequenceAdjudicator)? {
+        id == ROVERAdjudicator.id ? ROVERAdjudicator() : nil
+    }
+
+    /// True when the id names something this registry can build at all —
+    /// the invariant `allIDs` actually promises.
+    public static func isKnown(_ id: String) -> Bool {
+        make(id) != nil || makeSequence(id) != nil
+    }
 
     /// `(id, guidance)` for every adjudicator, in display order. Phase 6: the
     /// selection surface states tradeoffs and never ranks — a single ordering
@@ -172,6 +196,8 @@ public enum AdjudicatorRegistry {
         [(DawidSkeneLiteAdjudicator.id, DawidSkeneLiteAdjudicator.guidance),
          (MajorityAdjudicator.id, MajorityAdjudicator.guidance),
          (FullDawidSkeneAdjudicator.id, FullDawidSkeneAdjudicator.guidance),
-         (PriorWeightedAdjudicator.id, PriorWeightedAdjudicator.guidance)]
+         (PriorWeightedAdjudicator.id, PriorWeightedAdjudicator.guidance),
+         (IRTAdjudicator.id, IRTAdjudicator.guidance),
+         (ROVERAdjudicator.id, ROVERAdjudicator.guidance)]
     }
 }

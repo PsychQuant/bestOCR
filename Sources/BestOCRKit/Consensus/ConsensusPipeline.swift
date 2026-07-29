@@ -24,6 +24,48 @@ public enum ConsensusPipeline {
 
     // MARK: - Pure core
 
+    /// Sequence-adjudicator path (#17 phase 5): builds one confusion network
+    /// per page from raw page text and combines the per-page estimates.
+    ///
+    /// Kept separate from `adjudicate(results:adjudicator:)` on purpose — the
+    /// two consume genuinely different inputs, and collapsing them would force
+    /// `AlignedItem` to carry a distinction it explicitly does not make.
+    public static func adjudicateSequence(results: [String: OCRResult],
+                                          adjudicator: any SequenceAdjudicator)
+        -> ConsensusEstimate {
+        var pages: Set<Int> = []
+        for r in results.values { for p in r.pages { pages.insert(p.page) } }
+
+        var items: [ItemConsensus] = []
+        var agreement: [String: [String: Double]] = [:]
+        var overall: [String: [Double]] = [:]
+        for page in pages.sorted() {
+            var sequences: [String: [String]] = [:]
+            for (engine, result) in results {
+                guard let pageResult = result.pages.first(where: { $0.page == page }) else { continue }
+                sequences[engine] = ConfusionNetworkBuilder.tokenize(pageResult.text)
+            }
+            guard sequences.count >= 2 else { continue }
+            let estimate = adjudicator.adjudicate(
+                network: ConfusionNetworkBuilder.build(page: page, sequences: sequences))
+            items.append(contentsOf: estimate.items)
+            // Last page wins for the diagnostic matrices; per-page values are
+            // averaged for competence so a long document is not dominated by
+            // its final page.
+            agreement = estimate.agreement
+            for (engine, value) in estimate.diagnostics.overallCompetence ?? [:] {
+                overall[engine, default: []].append(value)
+            }
+        }
+        return ConsensusEstimate(
+            adjudicator: type(of: adjudicator).id,
+            items: items,
+            agreement: agreement,
+            diagnostics: AdjudicatorDiagnostics(
+                overallCompetence: overall.mapValues { $0.reduce(0, +) / Double($0.count) },
+                competence: nil, iterations: nil, converged: nil, confusion: nil))
+    }
+
     /// Page-wise extract + align across engines, then estimate.
     /// Page-wise extract + align across engines, then estimate.
     ///
@@ -99,11 +141,13 @@ public enum ConsensusPipeline {
         // Unknown id is a hard error, never a silent fallback: running a
         // different model under the requested one's estimand name is exactly
         // the mislabelling #17 exists to prevent.
-        guard var adjudicator = AdjudicatorRegistry.make(adjudicatorID) else {
+        guard AdjudicatorRegistry.isKnown(adjudicatorID) else {
             throw OCREngineError(engine: "consensus",
                                  message: "unknown adjudicator '\(adjudicatorID)' — available: "
                                      + AdjudicatorRegistry.allIDs.joined(separator: ", "))
         }
+        // nil only for sequence adjudicators, which take the branch below.
+        var adjudicator = AdjudicatorRegistry.make(adjudicatorID) ?? AdjudicatorRegistry.default
         guard dpi.isFinite, dpi > 0 else {
             throw OCREngineError(engine: "consensus",
                                  message: "dpi must be a finite positive number (got \(dpi))")
@@ -175,15 +219,22 @@ public enum ConsensusPipeline {
                                  message: "fewer than 2 engines produced output — \(trail)")
         }
 
-        // Phase 3: the prior-weighted model needs a prior built from measured
-        // rows for the engines that actually ran.
-        if adjudicatorID == PriorWeightedAdjudicator.id {
-            let store = (try? EvidenceStore.load(from: EvidenceStore.defaultURL()))
-                ?? EvidenceStore(rows: [])
-            adjudicator = PriorWeightedAdjudicator.fromEvidence(store,
-                                                                engineIDs: results.keys.sorted())
+        let estimate: ConsensusEstimate
+        if AdjudicatorRegistry.isSequenceAdjudicator(adjudicatorID) {
+            // Phase 5: ROVER consumes a confusion network built from raw page
+            // text, not aligned items — the two inputs are genuinely different.
+            estimate = adjudicateSequence(results: results, adjudicator: ROVERAdjudicator())
+        } else {
+            // Phase 3: the prior-weighted model needs a prior built from
+            // measured rows for the engines that actually ran.
+            if adjudicatorID == PriorWeightedAdjudicator.id {
+                let store = (try? EvidenceStore.load(from: EvidenceStore.defaultURL()))
+                    ?? EvidenceStore(rows: [])
+                adjudicator = PriorWeightedAdjudicator.fromEvidence(
+                    store, engineIDs: results.keys.sorted())
+            }
+            estimate = adjudicate(results: results, adjudicator: adjudicator)
         }
-        let estimate = adjudicate(results: results, adjudicator: adjudicator)
         // Two OCRResults are not two effective informants: without a single
         // item co-answered with REAL content (empty placeholders abstain)
         // there is no consensus to report.
