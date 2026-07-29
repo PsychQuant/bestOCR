@@ -97,11 +97,14 @@ public struct DocumentPipelineEngine: OCREngine {
 
         let `protocol`: Int
         let loadSeconds: Double?
+        /// The tool's own version, reported by the process that did the work
+        /// (#28). Optional for old adapters.
+        let version: String?
         let pages: [Page]
         let blocks: [Block]
 
         enum CodingKeys: String, CodingKey {
-            case `protocol`, pages, blocks
+            case `protocol`, pages, blocks, version
             case loadSeconds = "load_seconds"
         }
     }
@@ -190,18 +193,21 @@ public struct DocumentPipelineEngine: OCREngine {
                           text: $0.text, bbox: $0.bbox)
         }
         return try finish(pages: pages, blocks: blocks,
-                          loadSeconds: reply.loadSeconds, request: request)
+                          loadSeconds: reply.loadSeconds,
+                          toolVersion: reply.version, request: request)
     }
 
     func perPageResult(python: URL, script: URL, request: OCRRequest) throws -> OCRResult {
         var pages: [PageResult] = []
         var blocks: [DocumentBlock] = []
+        var toolVersion: String?
         for page in request.pages {
             let t0 = ProcessInfo.processInfo.systemUptime
             let reply = try assemble(python: python, script: script,
                                      images: [page.url.path],
                                      languages: request.languages)
             let seconds = ProcessInfo.processInfo.systemUptime - t0
+            if toolVersion == nil { toolVersion = reply.version }
             guard reply.pages.count == 1 else {
                 throw OCREngineError(engine: id,
                                      message: "page \(page.pageNumber): adapter returned \(reply.pages.count) page records for one image")
@@ -218,15 +224,18 @@ public struct DocumentPipelineEngine: OCREngine {
         }
         // No separable load time: this tool reloads per invocation, and that
         // cost is already inside each page's measured seconds.
-        return try finish(pages: pages, blocks: blocks, loadSeconds: nil, request: request)
+        return try finish(pages: pages, blocks: blocks, loadSeconds: nil,
+                          toolVersion: toolVersion, request: request)
     }
 
     func finish(pages: [PageResult], blocks: [DocumentBlock],
-                loadSeconds: Double?, request: OCRRequest) throws -> OCRResult {
+                loadSeconds: Double?, toolVersion: String?,
+                request: OCRRequest) throws -> OCRResult {
         let condition = ConditionTuple(model: tool, quant: "n/a", dpi: request.dpi,
                                        docType: request.docType, platform: "python",
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: toolVersion)
         let result = OCRResult(engineID: id, pages: pages, condition: condition,
                                document: DocumentStructure(blocks: blocks,
                                                            loadSeconds: loadSeconds))
