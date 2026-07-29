@@ -34,11 +34,11 @@ struct ConsensusEstimatorTests {
         for (i, ic) in est.items.enumerated() {
             #expect(ic.consensusText == "t\(i)", "item \(i) consensus should be truth")
         }
-        let a = est.overallCompetence["A"] ?? 0
-        let b = est.overallCompetence["B"] ?? 0
-        let c = est.overallCompetence["C"] ?? 0
+        let a = est.diagnostics.overallCompetence?["A"] ?? 0
+        let b = est.diagnostics.overallCompetence?["B"] ?? 0
+        let c = est.diagnostics.overallCompetence?["C"] ?? 0
         #expect(a > b && b > c, "competence ordering A > B > C (got \(a), \(b), \(c))")
-        #expect(est.iterations >= 1 && est.iterations <= 20)
+        #expect((est.diagnostics.iterations ?? -1) >= 1 && (est.diagnostics.iterations ?? -1) <= 20)
     }
 
     @Test func twoWayTieIsLowConsensus() {
@@ -76,10 +76,10 @@ struct ConsensusEstimatorTests {
                                      responses: ["A": "0.03\(i)", "B": "9.99\(i)", "C": "0.03\(i)"]))
         }
         let est = ConsensusEstimator.estimate(items: items)
-        let bProse = est.competence["B"]?[.proseLine] ?? 0
-        let bCell = est.competence["B"]?[.tableCell] ?? 0
+        let bProse = est.diagnostics.competence?["B"]?[.proseLine] ?? 0
+        let bCell = est.diagnostics.competence?["B"]?[.tableCell] ?? 0
         #expect(bProse > bCell, "B prose competence (\(bProse)) must exceed cell competence (\(bCell))")
-        let aCell = est.competence["A"]?[.tableCell] ?? 0
+        let aCell = est.diagnostics.competence?["A"]?[.tableCell] ?? 0
         #expect(aCell > bCell, "A cell competence must exceed B cell competence")
     }
 
@@ -97,8 +97,8 @@ struct ConsensusEstimatorTests {
             items.append(item(100 + i, ["C": "solo-\(i)"]))
         }
         let est = ConsensusEstimator.estimate(items: items)
-        let a = est.overallCompetence["A"] ?? 0
-        let c = est.overallCompetence["C"] ?? 0
+        let a = est.diagnostics.overallCompetence?["A"] ?? 0
+        let c = est.diagnostics.overallCompetence?["C"] ?? 0
         #expect(c < a, "30 hallucinated solo lines must not outrank a 4/4-correct engine (A \(a), C \(c))")
     }
 
@@ -117,7 +117,7 @@ struct ConsensusEstimatorTests {
         for maxIter in [1, 2, 20] {
             let est = ConsensusEstimator.estimate(items: items, maxIterations: maxIter)
             let informative = est.items.filter { !$0.lowConsensus }
-            for (engine, reported) in est.overallCompetence {
+            for (engine, reported) in est.diagnostics.overallCompetence ?? [:] {
                 var n = 0, correct = 0
                 for v in informative {
                     guard let r = v.responses[engine] else { continue }
@@ -144,9 +144,9 @@ struct ConsensusEstimatorTests {
                 "the only real content wins; empties abstain")
         #expect(est.items.first?.lowConsensus == true,
                 "one real supporter is uncorroborated")
-        #expect(est.overallCompetence["A"] == nil && est.overallCompetence["B"] == nil,
+        #expect(est.diagnostics.overallCompetence?["A"] == nil && est.diagnostics.overallCompetence?["B"] == nil,
                 "placeholder-only engines have no competence identity")
-        #expect(est.overallCompetence["C"] != nil)
+        #expect(est.diagnostics.overallCompetence?["C"] != nil)
     }
 
     @Test func responsesPreserveRawRendering() {
@@ -197,7 +197,7 @@ struct ConsensusEstimatorTests {
             for v in est.items {
                 var winning = 0.0, total = 0.0
                 for (engine, resp) in v.responses {
-                    let w = est.competence[engine]?[v.key.kind] ?? 0.5
+                    let w = est.diagnostics.competence?[engine]?[v.key.kind] ?? 0.5
                     total += w
                     if resp == v.consensusText { winning += w }
                 }
@@ -220,7 +220,7 @@ struct ConsensusEstimatorTests {
             items.append(item(i, ["A": "wa\(i)", "B": "wb\(i)", "C": "t\(i)", "D": "t\(i)"]))
         }
         let est = ConsensusEstimator.estimate(items: items, maxIterations: 1)
-        #expect(!est.converged)
+        #expect(!(est.diagnostics.converged ?? false))
         let target = est.items.first { $0.key.index == 0 }
         #expect(target?.lowConsensus == true,
                 "label that loses under the published competences must be routed to review")
@@ -234,9 +234,9 @@ struct ConsensusEstimatorTests {
             items.append(item(i, ["A": "t\(i)", "B": "t\(i)", "C": "t\(i)"]))
         }
         let full = ConsensusEstimator.estimate(items: items)
-        #expect(full.converged, "unanimous fixture must reach a fixed point")
+        #expect((full.diagnostics.converged ?? false), "unanimous fixture must reach a fixed point")
         let capped = ConsensusEstimator.estimate(items: items, maxIterations: 1)
-        #expect(!capped.converged, "cap hit before the stability check must report converged=false")
+        #expect(!(capped.diagnostics.converged ?? false), "cap hit before the stability check must report converged=false")
     }
 
     @Test func emptyResponsesItemIsSkippedNotTrapped() {

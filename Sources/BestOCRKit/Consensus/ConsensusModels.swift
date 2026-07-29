@@ -77,30 +77,112 @@ public struct ItemConsensus: Sendable, Codable {
     }
 }
 
-/// Full estimator output: per-item verdicts + per-engine competence
-/// (overall and per item kind) + pairwise raw-agreement diagnostic.
-public struct ConsensusEstimate: Sendable {
-    public let items: [ItemConsensus]
-    public let overallCompetence: [String: Double]
-    public let competence: [String: [ItemKind: Double]]
-    /// Pairwise raw agreement over co-answered items — independence-violation
-    /// diagnostic (engines sharing errors inflate each other's competence).
-    public let agreement: [String: [String: Double]]
-    public let iterations: Int
-    /// False when the iteration cap interrupted EM before the assignment and
-    /// tie set stabilized — the verdicts are still internally consistent
-    /// (competences are measured against them) but not a fixed point.
-    public let converged: Bool
+/// Per-item latent parameters (#17 phase 4 — IRT / Bayesian CCT). An array of
+/// pairs rather than a dictionary keyed by `ItemKey`: Swift encodes a
+/// non-String-keyed dictionary as a flat alternating array, which is unreadable
+/// in a report artifact — the same reason `ConsensusReport` uses string keys
+/// throughout.
+public struct ItemParameterEntry: Sendable, Equatable, Codable {
+    public let key: ItemKey
+    /// Model-named parameters, e.g. `difficulty`, `discrimination`, `guessing`.
+    public let parameters: [String: Double]
 
-    public init(items: [ItemConsensus], overallCompetence: [String: Double],
-                competence: [String: [ItemKind: Double]],
-                agreement: [String: [String: Double]], iterations: Int,
-                converged: Bool) {
-        self.items = items
+    public init(key: ItemKey, parameters: [String: Double]) {
+        self.key = key
+        self.parameters = parameters
+    }
+}
+
+/// Model-specific output of one adjudicator, with the distinction the whole
+/// design rests on (#17 §4.2):
+///
+/// - `nil` — **this adjudicator has no such notion** (naive majority has no
+///   competence and is not iterative).
+/// - empty collection — it *has* the notion and there was nothing to report
+///   (every item was uninformative, so no engine earned a competence entry).
+///
+/// Collapsing the two is the bug this type exists to prevent: it is what makes
+/// a majority report read like a degenerate Dawid-Skene one.
+///
+/// **Known extensibility cost** (§4.3): a closed set of optional fields, so an
+/// adjudicator reporting a genuinely novel quantity needs a new field. Accepted
+/// while the adjudicator set is enumerated; the honest trigger to revisit is
+/// IRT (phase 4), the first model whose output has no analogue in the others.
+public struct AdjudicatorDiagnostics: Sendable, Equatable {
+    /// Pooled per-engine competence. `nil` when the model has no such concept.
+    public let overallCompetence: [String: Double]?
+    /// Per-engine, per-item-kind competence. `nil` when unsupported.
+    public let competence: [String: [ItemKind: Double]]?
+    /// `nil` for one-shot (non-iterative) adjudicators.
+    public let iterations: Int?
+    /// `nil` when convergence is undefined for this model.
+    public let converged: Bool?
+    /// Per-engine directional confusion — engine → true label → observed label
+    /// → probability. `nil` for every model without a confusion concept; this
+    /// is what ds-lite structurally cannot hold and full Dawid-Skene restores.
+    public let confusion: [String: [String: [String: Double]]]?
+    /// `nil` until an adjudicator estimates per-item latent parameters.
+    public let itemParameters: [ItemParameterEntry]?
+    /// A competence prior the adjudicator was **given** rather than estimated.
+    /// Deliberately separate from `overallCompetence`: reporting an input as an
+    /// estimate would claim a measurement the model never made.
+    ///
+    /// Note (#17 §4.3): the spec predicted the closed-set cost would first bite
+    /// at phase 4 (IRT). It bit at phase 3 — a prior is a genuinely new kind of
+    /// quantity, so it needed a genuinely new field. The prediction was right
+    /// about the mechanism and wrong about the timing; recorded rather than
+    /// quietly patched, since it is evidence for revisiting the closed set.
+    public let priorCompetence: [String: Double]?
+    /// Engines whose prior was assumed rather than measured — nameable so a
+    /// report can disclose which weights rest on an assumption.
+    public let assumedPriorEngines: [String]?
+
+    public init(overallCompetence: [String: Double]? = nil,
+                competence: [String: [ItemKind: Double]]? = nil,
+                iterations: Int? = nil,
+                converged: Bool? = nil,
+                confusion: [String: [String: [String: Double]]]? = nil,
+                itemParameters: [ItemParameterEntry]? = nil,
+                priorCompetence: [String: Double]? = nil,
+                assumedPriorEngines: [String]? = nil) {
         self.overallCompetence = overallCompetence
         self.competence = competence
-        self.agreement = agreement
         self.iterations = iterations
         self.converged = converged
+        self.confusion = confusion
+        self.itemParameters = itemParameters
+        self.priorCompetence = priorCompetence
+        self.assumedPriorEngines = assumedPriorEngines
+    }
+}
+
+/// Adjudicator output (#17): which model produced it, the per-item verdicts,
+/// the adjudicator-independent agreement diagnostic, and whatever
+/// model-specific quantities that adjudicator actually has.
+///
+/// `adjudicator` is not decoration — the same quantity computed by two
+/// different models is two different estimands (`evidence/schema.md` hard
+/// rules 1/3), so identity has to travel with the result rather than being
+/// reconstructed by whoever reads it.
+public struct ConsensusEstimate: Sendable {
+    /// The `ConsensusAdjudicator.id` that produced this estimate.
+    public let adjudicator: String
+    public let items: [ItemConsensus]
+    /// Pairwise raw agreement over co-answered items — independence-violation
+    /// diagnostic (engines sharing errors inflate each other's competence).
+    /// Computed from raw responses, so it is adjudicator-independent and
+    /// stays comparable across models.
+    public let agreement: [String: [String: Double]]
+    /// Model-specific output. `nil` fields mean "no such notion", empty
+    /// collections mean "nothing to report" — see `AdjudicatorDiagnostics`.
+    public let diagnostics: AdjudicatorDiagnostics
+
+    public init(adjudicator: String, items: [ItemConsensus],
+                agreement: [String: [String: Double]],
+                diagnostics: AdjudicatorDiagnostics) {
+        self.adjudicator = adjudicator
+        self.items = items
+        self.agreement = agreement
+        self.diagnostics = diagnostics
     }
 }

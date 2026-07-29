@@ -24,8 +24,59 @@ public enum ConsensusPipeline {
 
     // MARK: - Pure core
 
+    /// Sequence-adjudicator path (#17 phase 5): builds one confusion network
+    /// per page from raw page text and combines the per-page estimates.
+    ///
+    /// Kept separate from `adjudicate(results:adjudicator:)` on purpose — the
+    /// two consume genuinely different inputs, and collapsing them would force
+    /// `AlignedItem` to carry a distinction it explicitly does not make.
+    public static func adjudicateSequence(results: [String: OCRResult],
+                                          adjudicator: any SequenceAdjudicator)
+        -> ConsensusEstimate {
+        var pages: Set<Int> = []
+        for r in results.values { for p in r.pages { pages.insert(p.page) } }
+
+        var items: [ItemConsensus] = []
+        var agreement: [String: [String: Double]] = [:]
+        var overall: [String: [Double]] = [:]
+        for page in pages.sorted() {
+            var sequences: [String: [String]] = [:]
+            for (engine, result) in results {
+                guard let pageResult = result.pages.first(where: { $0.page == page }) else { continue }
+                sequences[engine] = ConfusionNetworkBuilder.tokenize(pageResult.text)
+            }
+            guard sequences.count >= 2 else { continue }
+            let estimate = adjudicator.adjudicate(
+                network: ConfusionNetworkBuilder.build(page: page, sequences: sequences))
+            items.append(contentsOf: estimate.items)
+            // Last page wins for the diagnostic matrices; per-page values are
+            // averaged for competence so a long document is not dominated by
+            // its final page.
+            agreement = estimate.agreement
+            for (engine, value) in estimate.diagnostics.overallCompetence ?? [:] {
+                overall[engine, default: []].append(value)
+            }
+        }
+        return ConsensusEstimate(
+            adjudicator: type(of: adjudicator).id,
+            items: items,
+            agreement: agreement,
+            diagnostics: AdjudicatorDiagnostics(
+                overallCompetence: overall.mapValues { $0.reduce(0, +) / Double($0.count) },
+                competence: nil, iterations: nil, converged: nil, confusion: nil))
+    }
+
     /// Page-wise extract + align across engines, then estimate.
-    public static func adjudicate(results: [String: OCRResult]) -> ConsensusEstimate {
+    /// Page-wise extract + align across engines, then estimate.
+    ///
+    /// The adjudicator is injected (#17). It defaults to Dawid-Skene-lite so
+    /// every pre-existing call site keeps its exact behaviour; an unknown id
+    /// must be rejected by the caller rather than silently defaulting here —
+    /// running a different model under the requested one's estimand name is
+    /// precisely the mislabelling this design exists to prevent.
+    public static func adjudicate(results: [String: OCRResult],
+                                  adjudicator: any ConsensusAdjudicator
+                                      = DawidSkeneLiteAdjudicator()) -> ConsensusEstimate {
         var pages: Set<Int> = []
         for r in results.values { for p in r.pages { pages.insert(p.page) } }
 
@@ -41,7 +92,7 @@ public enum ConsensusPipeline {
             allItems.append(contentsOf: ConsensusAlignment.align(page: page, extractions: extractions,
                                                                  degenerate: degenerate))
         }
-        return ConsensusEstimator.estimate(items: allItems)
+        return adjudicator.adjudicate(items: allItems)
     }
 
     // MARK: - Outputs
@@ -84,7 +135,19 @@ public enum ConsensusPipeline {
     public static func execute(inputPath: String, engineIDs: [String], dpi: Double,
                                pageSpec: String, languages: [String], docType: String,
                                outDir: URL, registry: EngineRegistry,
-                               runLog: RunLog) async throws -> ConsensusRunSummary {
+                               runLog: RunLog,
+                               adjudicatorID: String = DawidSkeneLiteAdjudicator.id)
+        async throws -> ConsensusRunSummary {
+        // Unknown id is a hard error, never a silent fallback: running a
+        // different model under the requested one's estimand name is exactly
+        // the mislabelling #17 exists to prevent.
+        guard AdjudicatorRegistry.isKnown(adjudicatorID) else {
+            throw OCREngineError(engine: "consensus",
+                                 message: "unknown adjudicator '\(adjudicatorID)' — available: "
+                                     + AdjudicatorRegistry.allIDs.joined(separator: ", "))
+        }
+        // nil only for sequence adjudicators, which take the branch below.
+        var adjudicator = AdjudicatorRegistry.make(adjudicatorID) ?? AdjudicatorRegistry.default
         guard dpi.isFinite, dpi > 0 else {
             throw OCREngineError(engine: "consensus",
                                  message: "dpi must be a finite positive number (got \(dpi))")
@@ -156,7 +219,22 @@ public enum ConsensusPipeline {
                                  message: "fewer than 2 engines produced output — \(trail)")
         }
 
-        let estimate = adjudicate(results: results)
+        let estimate: ConsensusEstimate
+        if AdjudicatorRegistry.isSequenceAdjudicator(adjudicatorID) {
+            // Phase 5: ROVER consumes a confusion network built from raw page
+            // text, not aligned items — the two inputs are genuinely different.
+            estimate = adjudicateSequence(results: results, adjudicator: ROVERAdjudicator())
+        } else {
+            // Phase 3: the prior-weighted model needs a prior built from
+            // measured rows for the engines that actually ran.
+            if adjudicatorID == PriorWeightedAdjudicator.id {
+                let store = (try? EvidenceStore.load(from: EvidenceStore.defaultURL()))
+                    ?? EvidenceStore(rows: [])
+                adjudicator = PriorWeightedAdjudicator.fromEvidence(
+                    store, engineIDs: results.keys.sorted())
+            }
+            estimate = adjudicate(results: results, adjudicator: adjudicator)
+        }
         // Two OCRResults are not two effective informants: without a single
         // item co-answered with REAL content (empty placeholders abstain)
         // there is no consensus to report.
@@ -189,9 +267,11 @@ public enum ConsensusPipeline {
             : Double(estimate.items.filter(\.lowConsensus).count) / Double(estimate.items.count)
         let entry = RunLogEntry(
             consensusOf: results, input: inputPath, output: outputs.markdown.path,
-            quality: .init(estimand: "consensus.low_consensus_share@v1",
+            quality: .init(estimand: Estimand.consensus(estimate.adjudicator, "low_consensus_share"),
                            value: share,
-                           reference: "engines=\(results.keys.sorted().joined(separator: "+"));converged=\(estimate.converged)"))
+                           reference: "engines=\(results.keys.sorted().joined(separator: "+"))"
+                               + ";adjudicator=\(estimate.adjudicator)"
+                               + ";converged=\(estimate.diagnostics.converged.map(String.init) ?? "n/a")"))
         try runLog.append(entry)
 
         return ConsensusRunSummary(outputMarkdown: outputs.markdown,
@@ -217,15 +297,23 @@ struct ConsensusReport: Codable {
     }
 
     /// Report schema version: 2 = responses/consensus text are RAW engine
-    /// renderings (v1 published normalized text). Legacy files decode as 1.
-    static let currentSchemaVersion = 2
+    /// renderings (v1 published normalized text). 3 = the adjudicator is named
+    /// and its model-specific fields are optional, so "this model has no such
+    /// notion" is representable rather than being flattened to a zero (#17).
+    /// Legacy files decode as 1/2 with `adjudicator` defaulting to ds-lite.
+    static let currentSchemaVersion = 3
 
     let schemaVersion: Int
+    /// Which adjudicator produced this report. Absent in schema < 3, where
+    /// ds-lite was the only adjudicator that existed.
+    let adjudicator: String
     let engines: [String]
     let skipped: [String: String]
     let itemCount: Int
-    let iterations: Int
-    let converged: Bool
+    /// `nil` for non-iterative adjudicators (naive majority).
+    let iterations: Int?
+    /// `nil` when convergence is undefined for the adjudicator.
+    let converged: Bool?
     /// Share of items with ≥2 responses — the honest coverage number: how
     /// much of the transcript is actually corroborated vs single-engine.
     let coAnswerShare: Double
@@ -233,14 +321,17 @@ struct ConsensusReport: Codable {
     /// in `engines` yet are absent from the competence maps; called out
     /// instead of silently missing.
     let enginesWithoutAlignedItems: [String]
-    let overallCompetence: [String: Double]
-    let competenceByKind: [String: [String: Double]]
+    /// `nil` when the adjudicator has no competence notion — distinct from an
+    /// empty map, which means it has one and nothing qualified (#17 §4.2).
+    let overallCompetence: [String: Double]?
+    let competenceByKind: [String: [String: Double]]?
     let agreement: [String: [String: Double]]
     let lowConsensus: [LowConsensusItem]
 
     enum CodingKeys: String, CodingKey {
         case engines, skipped, iterations, converged, agreement
         case schemaVersion = "schema_version"
+        case adjudicator
         case itemCount = "item_count"
         case coAnswerShare = "co_answer_share"
         case enginesWithoutAlignedItems = "engines_without_aligned_items"
@@ -257,13 +348,17 @@ struct ConsensusReport: Codable {
         self.engines = try c.decode([String].self, forKey: .engines)
         self.skipped = try c.decode([String: String].self, forKey: .skipped)
         self.itemCount = try c.decode(Int.self, forKey: .itemCount)
-        self.iterations = try c.decode(Int.self, forKey: .iterations)
-        self.converged = try c.decodeIfPresent(Bool.self, forKey: .converged) ?? false
+        // Reports written before adjudicators were pluggable were all
+        // Dawid-Skene-lite — the only adjudicator that existed.
+        self.adjudicator = try c.decodeIfPresent(String.self, forKey: .adjudicator) ?? "ds-lite"
+        self.iterations = try c.decodeIfPresent(Int.self, forKey: .iterations)
+        self.converged = try c.decodeIfPresent(Bool.self, forKey: .converged)
         self.coAnswerShare = try c.decodeIfPresent(Double.self, forKey: .coAnswerShare) ?? 0
         self.enginesWithoutAlignedItems =
             try c.decodeIfPresent([String].self, forKey: .enginesWithoutAlignedItems) ?? []
-        self.overallCompetence = try c.decode([String: Double].self, forKey: .overallCompetence)
-        self.competenceByKind = try c.decode([String: [String: Double]].self, forKey: .competenceByKind)
+        self.overallCompetence = try c.decodeIfPresent([String: Double].self, forKey: .overallCompetence)
+        self.competenceByKind = try c.decodeIfPresent([String: [String: Double]].self,
+                                                      forKey: .competenceByKind)
         self.agreement = try c.decode([String: [String: Double]].self, forKey: .agreement)
         self.lowConsensus = try c.decode([LowConsensusItem].self, forKey: .lowConsensus)
     }
@@ -273,8 +368,9 @@ struct ConsensusReport: Codable {
         self.engines = engines
         self.skipped = skipped
         self.itemCount = estimate.items.count
-        self.iterations = estimate.iterations
-        self.converged = estimate.converged
+        self.adjudicator = estimate.adjudicator
+        self.iterations = estimate.diagnostics.iterations
+        self.converged = estimate.diagnostics.converged
         self.coAnswerShare = estimate.items.isEmpty ? 0
             : Double(estimate.items.filter { item in
                 item.responses.values.filter { !$0.isEmpty }.count >= 2
@@ -282,9 +378,13 @@ struct ConsensusReport: Codable {
         self.enginesWithoutAlignedItems = engines.filter { engine in
             !estimate.items.contains { ($0.responses[engine]?.isEmpty == false) }
         }.sorted()
-        self.overallCompetence = estimate.overallCompetence
-        self.competenceByKind = estimate.competence.mapValues { kinds in
-            Dictionary(uniqueKeysWithValues: kinds.map { ($0.key.rawValue, $0.value) })
+        // nil (not [:]) when the adjudicator has no competence notion — a
+        // majority report must not read like a degenerate Dawid-Skene one (#17).
+        self.overallCompetence = estimate.diagnostics.overallCompetence
+        self.competenceByKind = estimate.diagnostics.competence.map { byEngine in
+            byEngine.mapValues { kinds in
+                Dictionary(uniqueKeysWithValues: kinds.map { ($0.key.rawValue, $0.value) })
+            }
         }
         self.agreement = estimate.agreement
         self.lowConsensus = estimate.items.filter(\.lowConsensus).map {

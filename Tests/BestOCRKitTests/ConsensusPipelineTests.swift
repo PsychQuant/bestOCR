@@ -82,8 +82,8 @@ struct ConsensusPipelineTests {
         #expect(estimate.items.count == 3)
         let texts = estimate.items.map(\.consensusText)
         #expect(texts == ["line one", "line two", "line three"])
-        let a = estimate.overallCompetence["A"] ?? 0
-        let b = estimate.overallCompetence["B"] ?? 0
+        let a = estimate.diagnostics.overallCompetence?["A"] ?? 0
+        let b = estimate.diagnostics.overallCompetence?["B"] ?? 0
         #expect(a > b, "engine with the garbled line must score lower")
     }
 
@@ -352,16 +352,26 @@ struct ConsensusPipelineTests {
             "A": result("A", "hello"), "B": result("B", "hello"),
         ])
         let report = ConsensusReport(estimate: estimate, engines: ["A", "B"], skipped: [:])
-        #expect(report.schemaVersion == 2)
+        #expect(report.schemaVersion == 3)
         let encoded = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
-        #expect(encoded.contains("\"schema_version\":2"), "the version must land in the JSON artifact")
+        #expect(encoded.contains("\"schema_version\":3"), "the version must land in the JSON artifact")
+        #expect(encoded.contains("\"adjudicator\":\"ds-lite\""),
+                "#17: the artifact must name the model that produced it")
         let legacy = """
         {"agreement":{},"engines":["A"],"item_count":0,"iterations":1,
          "low_consensus":[],"overall_competence":{},"competence_by_kind":{},
          "skipped":{}}
         """
         let decoded = try JSONDecoder().decode(ConsensusReport.self, from: Data(legacy.utf8))
-        #expect(decoded.schemaVersion == 1 && decoded.converged == false)
+        #expect(decoded.schemaVersion == 1)
+        // #17 changed this deliberately: a legacy file that never recorded
+        // `converged` decodes as nil ("not recorded") rather than false
+        // ("did not converge"). Defaulting to false asserted a fact the file
+        // never contained.
+        #expect(decoded.converged == nil)
+        // Legacy reports predate pluggable adjudicators — ds-lite was the only
+        // one that existed, so that is history, not an assumption.
+        #expect(decoded.adjudicator == "ds-lite")
     }
 
     @Test func registryHasNoEngineNamedConsensus() {
@@ -371,14 +381,16 @@ struct ConsensusPipelineTests {
     }
 
     @Test func oldReportJSONWithoutConvergedStillDecodes() throws {
-        // #13: pre-converged-field reports must keep decoding (default false).
+        // #13: pre-converged-field reports must keep decoding. #17 changed the
+        // absent value from `false` to `nil` — "not recorded" is not the same
+        // claim as "did not converge", and only nil can say the former.
         let old = """
         {"agreement":{},"engines":["A"],"item_count":0,"iterations":1,
          "low_consensus":[],"overall_competence":{},"competence_by_kind":{},
          "skipped":{},"co_answer_share":0,"engines_without_aligned_items":[]}
         """
         let report = try JSONDecoder().decode(ConsensusReport.self, from: Data(old.utf8))
-        #expect(report.converged == false)
+        #expect(report.converged == nil)
     }
 
     @Test func writeOutputsProducesTranscriptAndReport() throws {
