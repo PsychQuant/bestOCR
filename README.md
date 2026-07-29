@@ -174,7 +174,15 @@ bestocr evidence ingest <run-id>                # runlog → T2 rows (explicit g
 
 `consensus` runs ≥2 local engines over the same input, aligns items
 (line-primary, table cells split), and adjudicates disagreements with a
-Dawid-Skene-lite estimator: consensus transcript (`<stem>.consensus.md`, ⚠
+**pluggable adjudicator** (`--adjudicator`, default `ds-lite`): six models ship
+— `ds-lite`, `majority` (the control), `ds-full` (character-level directional
+confusion), `prior-weighted` (competence prior from measured T2 `word_recall`
+rows), `irt` (per-item difficulty + per-engine ability), and `rover` (confusion
+network; insertions/deletions representable). `--list-adjudicators` prints them
+as labelled tradeoffs, never a ranking — a single ordering would imply they
+measure the same thing. Consensus quantities are estimand-qualified per
+adjudicator (`consensus.<id>.<quantity>@v1`), so two models' numbers can never
+be cross-ranked. The default path: consensus transcript (`<stem>.consensus.md`, ⚠
 marks low-consensus items) + per-engine per-kind competence and a
 low-consensus review list (`<stem>.consensus.json`). Consensus is not ground
 truth — the report's `agreement` matrix surfaces inter-engine error

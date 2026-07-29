@@ -9,7 +9,7 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 270 tests / 41 suites;Swift Testing(import Testing),不是 XCTest
+swift test             # 304 tests / 46 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
 - **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
@@ -48,8 +48,10 @@ Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
   Convert/                 MarkdownMath(pandoc 規則)/ FileConverter /
                            DocxValidator / OutputPlanner(防覆寫)
   PipelineFlow.swift       input → deliverable 串接(#24)
-  Consensus/               ItemExtractor / ConsensusAlignment /
-                           ConsensusEstimator(Dawid-Skene-lite) / Pipeline
+  Consensus/               ItemExtractor / ConsensusAlignment / Pipeline /
+                           ConsensusAdjudicator(protocol + registry)/ 六個
+                           adjudicator(ds-lite/majority/ds-full/
+                           prior-weighted/irt/rover;#17)
 Sources/bestocr/           CLI 薄殼(run / pipeline / list-engines / recommend /
                            compare / consensus / evidence)
 repos/measureOCR           ❄️ 凍結儀器(article 1 pin)— 絕不修改
@@ -139,6 +141,13 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   (**必要**——plugin wrapper 只裝 `bestocr-mcp` 不裝 CLI,skill 若委派給 CLI
   對 plugin 使用者會直接壞);`ocr-to` skill 改成薄殼(規則已在 binary,skill
   只留 workload 判斷與歸因);kit/plugin/marketplace 三號統一 0.8.0
+- ✅ P12 pluggable consensus adjudicators(2026-07-29,#17,PR #32 由並行
+  session 實作):`ConsensusAdjudicator` seam + `AdjudicatorDiagnostics`
+  (**nil = 無此概念、[:] = 有概念但無可報** —— 別混);六個 adjudicator 經
+  `--adjudicator` / `--list-adjudicators`(tradeoffs 絕不排名);estimand 依
+  adjudicator 資格化 `consensus.<id>.<quantity>@v1`(legacy 無資格名讀作
+  ds-lite);full-DS 是**字元級** confusion(`rn`→`m` 不可表示,型別內揭露);
+  Bayesian CCT/GCM **刻意未建**(沒有 sampler 就不掛那個名字)。304/46 tests
 - Backlog:assembly estimand 的標註參照子集(spec §12,最大 open item)、
   text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
 
