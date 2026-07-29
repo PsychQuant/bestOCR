@@ -9,6 +9,9 @@ public struct ExternalToolEngine: OCREngine {
     public let tool: String
     public let capabilities: EngineCapabilities
     public let installHint: String
+    /// Optional honest tradeoff/decision label (protocol requirement witness);
+    /// travels with the engine into `list-engines` and `recommend`.
+    public let tradeoffNote: String?
     let pythonOverride: String?
     let scriptOverride: URL?
     let timeout: TimeInterval
@@ -17,10 +20,12 @@ public struct ExternalToolEngine: OCREngine {
     public let family = EngineFamily.classical
 
     public init(tool: String, capabilities: EngineCapabilities, installHint: String,
+                tradeoffNote: String? = nil,
                 python: String? = nil, script: URL? = nil, timeout: TimeInterval = 300) {
         self.tool = tool
         self.capabilities = capabilities
         self.installHint = installHint
+        self.tradeoffNote = tradeoffNote
         self.pythonOverride = python
         self.scriptOverride = script
         self.timeout = timeout
@@ -133,12 +138,19 @@ extension ExternalToolEngine {
             installHint: "pip install cnocr[ort-cpu]")
     }
 
+    /// Deliberately pinned to the surya-ocr 0.17.x generation (#29): the
+    /// classical det+rec pipeline is self-contained — no model server — which
+    /// makes this the roster's fallback that stays standing when the
+    /// llama-server path breaks (#15). surya-2 (0.22.x) is a 0.65B VLM needing
+    /// a served model: a DIFFERENT architecture, tracked as its own candidate
+    /// in evidence/candidates.json, not an upgrade of this engine.
     public static func surya() -> ExternalToolEngine {
         ExternalToolEngine(
             tool: "surya",
             capabilities: EngineCapabilities(outputLevel: .plainText,
                                              languages: ["en", "zh-Hant", "zh-Hans", "ja"],
                                              needsNetwork: false, memoryClass: .medium),
-            installHint: "pip install surya-ocr")
+            installHint: "pip install \"surya-ocr<0.20\"  (0.17.x generation — see tradeoff)",
+            tradeoffNote: "deliberately pinned to the surya-ocr 0.17.x classical det+rec generation — self-contained, no model server, so it survives llama-server breakage (#15). surya-2 (0.22.x) is a different architecture (0.65B VLM behind llama-server/vllm) and is a separate engine candidate (#29), not an upgrade of this one")
     }
 }
