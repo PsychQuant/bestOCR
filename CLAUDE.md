@@ -148,8 +148,16 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   adjudicator 資格化 `consensus.<id>.<quantity>@v1`(legacy 無資格名讀作
   ds-lite);full-DS 是**字元級** confusion(`rn`→`m` 不可表示,型別內揭露);
   Bayesian CCT/GCM **刻意未建**(沒有 sampler 就不掛那個名字)。304/46 tests
-- Backlog:assembly estimand 的標註參照子集(spec §12,最大 open item)、
-  text-layer-aware PDF shortcut(spec §12)、MLX serving path(上游)
+- ✅ P13 bestOCR-bench 建立(2026-07-30,#33;spec `docs/superpowers/specs/
+  2026-07-30-bestocr-bench.md` 先進 main):公共證據層 sibling repo
+  (`PsychQuant/bestOCR-bench`)——corpus(license-gated)/ measurements
+  (**tier 只鑄 T2-community**)/ leaderboard / 提交 CI(hard rule 2 在
+  gate 擋未知 estimand;adapter-backed 缺 `tool_version` 軟警告;3×MAD 軟
+  離群)。schema.md **canonical home 留本 repo**,bench 放帶 banner 的
+  vendored copy;`recommend` v1 **不消費** bench rows。
+- Backlog:assembly estimand 的標註參照子集(spec §12,**= bench corpus 的
+  第一個住民**,同一份工)、text-layer-aware PDF shortcut(spec §12)、
+  MLX serving path(上游)
 
 ## Cloud reference 備忘(M4)
 

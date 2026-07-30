@@ -99,8 +99,13 @@ PsychQuant/ocr-swift          ← shared capability layer (published SPM package
 macdoc                bestOCR (this repo)
 PDF/document tools    ├── repos/measureOCR   ← instrument: factorial benchmark CLI
 (pdf-to-latex,        │                        + ANOVA harness (article 1 pins it)
- macdoc ocr, …)       ├── evidence/          ← benchmark results with provenance labels
-                      └── (future) mcp/      ← recommender MCP server (bestasr pattern)
+ macdoc ocr, …)       ├── evidence/          ← local T2 rows with provenance labels
+                      └── mcp/ via bestocr-mcp (shipped)
+
+bestOCR-bench         ← public cross-machine evidence layer (#33): corpus,
+(sibling repo)          community measurements (tier T2-community), leaderboard,
+                        submission CI. bestOCR keeps the instrument + local
+                        loop; recommend does NOT consume bench rows (v1).
 ```
 
 Both consumers pull `ocr-swift` from GitHub as a versioned package — moving
