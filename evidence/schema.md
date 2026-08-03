@@ -77,6 +77,17 @@ ranking rule.** Ranking granularity stays per-model-key (as it already is across
 `dpi` and `quant`); whether differing tool versions should partition a ranking is
 a separate estimand-semantics decision that this field enables but does not make.
 
+`triage_text_min` / `triage_frag_max` (**required** for `triage.*` estimands;
+bestOCR-bench#1 DA-1): the *effective* thresholds — after `BESTOCR_TRIAGE_*` env
+overrides — that produced the routing verdicts being scored. `TriageReport`
+carries them for exactly this reason: two contributors measuring with
+`text_min=200` and `text_min=350` are running *different conditions*, and a
+triage row without the thresholds is two measurements wearing one label.
+Unlike `tool_version`, absence here is an **error**, not "unrecorded" — the
+requirement lands before any triage row exists, so there is no legacy to
+grandfather. Non-triage rows omit both keys. Aggregation/grouping over triage
+rows MUST include both values in the grouping key.
+
 ### 3.1 `doc_type` vocabulary
 
 `doc_type` is the **corpus class** field: what kind of document was measured.
