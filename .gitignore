@@ -9,3 +9,5 @@ Package.resolved
 
 # External reference repos — clone-on-demand, not vendored (see references/README.md)
 references/repos/
+.spectra/
+openspec/.vector-search.db*
