@@ -60,8 +60,8 @@ with formulas and deliberately unmeasured** — they need a human-annotated
 reference subset built from redistributable material, which does not exist yet,
 so `recommend` keeps answering *evidence-pending* for them. Design:
 `docs/superpowers/specs/2026-07-28-document-assembly-engines.md`. Backlog:
-that annotated subset, text-layer-aware PDF shortcut, MLX serving path
-(upstream).
+that annotated subset (which also calibrates the triage thresholds), MLX
+serving path (upstream).
 
 ## Install for AI agents (Claude Code)
 
@@ -74,7 +74,8 @@ claude plugin marketplace add PsychQuant/bestOCR
 claude plugin install bestocr@bestocr
 ```
 
-MCP tools: `ocr` (sync, or `async: true` → `job_id`), `pipeline` (input →
+MCP tools: `triage` (per-page "does this need OCR?" measurement + route
+recommendation), `ocr` (sync, or `async: true` → `job_id`), `pipeline` (input →
 deliverable file), `consensus`, `recommend`, `list_engines`, `list_models`,
 `ocr_status`, `ocr_result` (long-poll). The
 server process persists across calls; VLM warmth lives in the local Ollama
@@ -165,6 +166,7 @@ is a quick way to confirm the Xcode toolchain builds cleanly.
 
 ```bash
 bestocr list-engines                            # probe table + install hints
+bestocr triage doc.pdf --divergence             # does this need OCR? route + suspect pages
 bestocr pipeline scan.pdf --to docx --doc-type scanned_doc   # input → deliverable
 bestocr run paper.pdf --doc-type math_pdf --math   # auto-routed
 bestocr run page.png --engine vision --doc-type screenshot

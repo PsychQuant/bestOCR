@@ -1,4 +1,5 @@
 import BestOCRKit
+import CoreGraphics
 import Foundation
 import MCP
 
@@ -273,6 +274,35 @@ public actor BestOCRMCPServer {
                 annotations: .init(readOnlyHint: false, openWorldHint: false)
             ),
             Tool(
+                name: "triage",
+                description: "Measurement-based triage — probes each page's text layer / "
+                    + "structure (no OCR performed) and returns a recommended route: "
+                    + "text_direct / render_suspect_pages / ocr_full / mixed, plus suspect "
+                    + "page numbers. Pass divergence=true to additionally measure pdftotext "
+                    + "vs Vision divergence on suspect pages only. When poppler (pdftotext) "
+                    + "is unavailable, returns a degraded report (reason + install hint) "
+                    + "with route ocr_full — identical to pre-triage behavior.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "input_path": .object([
+                            "type": .string("string"),
+                            "description": .string("Absolute path to the PDF or image"),
+                        ]),
+                        "pages": .object([
+                            "type": .string("string"),
+                            "description": .string("Page spec for PDFs, e.g. \"1-3,7\" (default: all)"),
+                        ]),
+                        "divergence": .object([
+                            "type": .string("boolean"),
+                            "description": .string("Measure pdftotext vs Vision divergence on suspect pages (default false)"),
+                        ]),
+                    ]),
+                    "required": .array([.string("input_path")]),
+                ]),
+                annotations: .init(readOnlyHint: true, openWorldHint: false)
+            ),
+            Tool(
                 name: "list_engines",
                 description: "Probe every registered engine (Vision, tesseract, Python-tool "
                     + "adapters, Ollama VLMs) and show availability + install hints.",
@@ -362,6 +392,8 @@ public actor BestOCRMCPServer {
             return try await handlePipeline(args)
         case "consensus":
             return try await handleConsensus(args)
+        case "triage":
+            return try await handleTriage(args)
         case "recommend":
             return try handleRecommend(args)
         case "list_engines":
@@ -675,6 +707,29 @@ public actor BestOCRMCPServer {
             return "job started\njob_id: \(id)\npoll with ocr_status / ocr_result"
         }
         return try await work()
+    }
+
+    private func handleTriage(_ args: [String: Value]) async throws -> String {
+        let inputPath = try requiredString("input_path", in: args)
+        // Page-spec parsing mirrors TriageCommand: open the PDF for its real
+        // page count so out-of-range pages are clamped here (a disjoint
+        // selection then reaches TriageProbe.run's explicit empty-selection
+        // guard instead of surviving as bogus page numbers). Unopenable PDFs
+        // fall through as nil = all pages; run() reports its own degraded.
+        let pages: [Int]? = args["pages"]?.stringValue.flatMap { spec -> [Int]? in
+            guard !spec.isEmpty,
+                  let doc = CGPDFDocument(URL(fileURLWithPath: inputPath) as CFURL),
+                  doc.numberOfPages > 0 else { return nil }
+            return InputNormalizer.parsePages(spec, count: doc.numberOfPages)
+        }
+        let divergence = args["divergence"]?.boolValue ?? false
+        let report = try await TriageProbe.runComplete(
+            inputPath: inputPath, pages: pages, divergence: divergence)
+        let data = try JSONEncoder().encode(report)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw OCREngineError(engine: "mcp", message: "failed to encode triage report")
+        }
+        return json
     }
 
     private func handleRecommend(_ args: [String: Value]) throws -> String {

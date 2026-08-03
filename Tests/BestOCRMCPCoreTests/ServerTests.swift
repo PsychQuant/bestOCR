@@ -58,7 +58,7 @@ struct ServerTests {
 
     @Test func toolListAndDispatchAgree() async throws {
         let names = Set(BestOCRMCPServer.defineTools().map(\.name))
-        #expect(names == ["ocr", "pipeline", "consensus", "recommend", "list_engines",
+        #expect(names == ["ocr", "pipeline", "consensus", "triage", "recommend", "list_engines",
                           "list_models", "ocr_status", "ocr_result"])
         let (server, _) = try makeServer()
         for name in names {
@@ -191,5 +191,22 @@ struct ServerTests {
             "doc_type": .string("math_pdf"),
         ])
         #expect(firstText(result).contains("EVIDENCE-PENDING"))
+    }
+
+    /// Task 2.2 parity contract: the MCP tool's JSON decodes to the exact
+    /// report runComplete produces for the same input (field-for-field, via
+    /// Equatable — encoders differ in formatting, so compare decoded values).
+    @Test func triageToolMatchesRunCompleteFieldForField() async throws {
+        let (server, tmpDir) = try makeServer()
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+        let img = try fixtureImage(in: tmpDir)
+        let result = await server.execute(name: "triage", arguments: [
+            "input_path": .string(img.path),
+        ])
+        let payload = firstText(result)
+        let viaMCP = try JSONDecoder().decode(TriageReport.self, from: Data(payload.utf8))
+        let direct = try await TriageProbe.runComplete(inputPath: img.path)
+        #expect(viaMCP == direct)
+        #expect(viaMCP.route == .ocrFull)   // image input: single no-text-layer page
     }
 }

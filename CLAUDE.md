@@ -1,3 +1,32 @@
+<!-- SPECTRA:START v1.0.2 -->
+
+# Spectra Instructions
+
+This project uses Spectra for Spec-Driven Development(SDD). Specs live in `openspec/specs/`, change proposals in `openspec/changes/`.
+
+## Use `/spectra-*` skills when:
+
+- A discussion needs structure before coding → `/spectra-discuss`
+- User wants to plan, propose, or design a change → `/spectra-propose`
+- Tasks are ready to implement → `/spectra-apply`
+- There's an in-progress change to continue → `/spectra-ingest`
+- User asks about specs or how something works → `/spectra-ask`
+- Implementation is done → `/spectra-archive`
+- Commit only files related to a specific change → `/spectra-commit`
+
+## Workflow
+
+discuss? → propose → apply ⇄ ingest → archive
+
+- `discuss` is optional — skip if requirements are clear
+- Requirements change mid-work? Plan mode → `ingest` → resume `apply`
+
+## Parked Changes
+
+Changes can be parked（暫存）— temporarily moved out of `openspec/changes/`. Parked changes won't appear in `spectra list` but can be found with `spectra list --parked`. To restore: `spectra unpark <name>`. The `/spectra-apply` and `/spectra-ingest` skills handle parked changes automatically.
+
+<!-- SPECTRA:END -->
+
 # bestOCR — agent notes
 
 Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
@@ -48,6 +77,12 @@ Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
   Convert/                 MarkdownMath(pandoc 規則)/ FileConverter /
                            DocxValidator / OutputPlanner(防覆寫)
   PipelineFlow.swift       input → deliverable 串接(#24)
+  Triage/                  測量式分診(#35):TriageProbe(per-page 文字層+
+                           碎片密度)/ TriageDivergence(抽取方法 informant
+                           對,只復用 ItemExtractor/alignment)/ TriageRunner
+                           (async divergence wiring)。閾值 env:
+                           `BESTOCR_TRIAGE_TEXT_MIN` / `BESTOCR_TRIAGE_FRAG_MAX`
+                           (evidence-pending,單樣本歸納)
   Consensus/               ItemExtractor / ConsensusAlignment / Pipeline /
                            ConsensusAdjudicator(protocol + registry)/ 六個
                            adjudicator(ds-lite/majority/ds-full/
@@ -155,9 +190,14 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   gate 擋未知 estimand;adapter-backed 缺 `tool_version` 軟警告;3×MAD 軟
   離群)。schema.md **canonical home 留本 repo**,bench 放帶 banner 的
   vendored copy;`recommend` v1 **不消費** bench rows。
+- 🔄 P14 triage 單一入口(2026-08-03,#35;openspec change
+  `triage-single-entry`,spec 進 `openspec/specs/`):測量式分診 —— per-page
+  文字層/碎片密度/divergence 三 task、三路徑(text_direct /
+  render_suspect_pages / ocr_full / mixed)、`triage` CLI+MCP、`ocr` skill
+  單一入口化、`triage.route_accuracy@v1` estimand(defined-unmeasured)。
+  spec §5.2 的 born-digital 重 OCR accepted cost 被推翻(§12 revisit)
 - Backlog:assembly estimand 的標註參照子集(spec §12,**= bench corpus 的
-  第一個住民**,同一份工)、text-layer-aware PDF shortcut(spec §12)、
-  MLX serving path(上游)
+  第一個住民**,同一份工;triage 閾值校準同批標註)、MLX serving path(上游)
 
 ## Cloud reference 備忘(M4)
 

@@ -37,8 +37,18 @@ ranking into two.
 | `quality.token_recall_vs_cloud@v1` | token recall against a cloud engine's output. The referent is a **model output, not ground truth**; never comparable to `word_recall` | measured |
 | `quality.reading_order_tau@v1` | Kendall's **tau-b** between the engine's block sequence and a reference block sequence. Matching is greedy one-to-one in produced order on the Dice coefficient over character bigrams of case-folded, whitespace-collapsed text, accepted at **≥ 0.60** (ties broken by lowest reference index, so the result is deterministic). Range [−1, 1]; 1 is identical order; `nil` below two matched pairs. Unmatched blocks (produced-but-absent, reference-but-missed) are **excluded from the coefficient and reported separately** — folding them in would blend a *detection* failure into an *ordering* score | **defined, unmeasured** |
 | `quality.table_structure_f1@v1` | cell-level F1 over the set of `(row index, column index, normalized text)` triples: precision, recall, and their harmonic mean. Cell-level rather than whole-table so a table recovered with one merged column still scores most of its cells | **defined, unmeasured** |
+| `triage.route_accuracy@v1` | share of pages whose triage-recommended route (`text_direct` / `render_suspect_pages` / `ocr_full`) matches a human-annotated correct route, over an annotated page set: `correct_pages / annotated_pages`. Per-page, so hybrid documents contribute each page separately. The referent is a **human annotation of the correct path**, not any engine output — never comparable to any `quality.*` estimand | **defined, unmeasured** |
 
 Derived scores (e.g. Pareto proxies) must name their formula version.
+
+**Triage thresholds are uncalibrated single-sample inductions.** The defaults
+behind `triage.route_accuracy@v1` — text-layer minimum 200 chars/page
+(`BESTOCR_TRIAGE_TEXT_MIN`), fragment-ratio maximum 0.6
+(`BESTOCR_TRIAGE_FRAG_MAX`) — were induced from one field batch (#35) and are
+env-overridable precisely because they are unmeasured. Calibrating them IS the
+act of measuring this estimand against the annotated page set (the same
+annotation work as the assembly reference subset). Until rows exist, triage
+reports remain honest recommendations, not accuracy claims.
 
 **"Defined, unmeasured" is a status, not a placeholder.** Both assembly
 estimands require a human-annotated reference subset — a checked block sequence

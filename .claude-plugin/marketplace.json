@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Evidence-based multi-engine OCR for Apple Silicon — MCP server with measured auto-routing, document-assembly engines, and a one-call pipeline to a deliverable file",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "plugins": [
     {
       "name": "bestocr",
       "source": "./plugins/bestocr",
       "description": "bestOCR for agents: bundles the bestocr-mcp MCP server (evidence-based multi-engine OCR over stdio — ocr with auto routing + fallback chain, recommend/list_engines/list_models plus async job polling, notarized binary auto-downloaded on install) and workflow skills — ocr (any PDF/image → Markdown, auto-routed), ocr-to (OCR → docx; math → native OMath via pandoc when available, macdoc otherwise), compare (local vs cloud reference with a named metric), evidence-ingest (the explicit runlog → T2 quality gate). Engines: Apple Vision, tesseract, rapidocr/cnocr/surya adapters, Ollama VLMs (GLM-OCR, OvisOCR2, PaddleOCR-VL), cloud reference (Claude/OpenAI/Gemini — never ranked).",
-      "version": "0.9.0"
+      "version": "0.10.0"
     }
   ]
 }

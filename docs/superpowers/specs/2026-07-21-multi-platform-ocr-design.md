@@ -224,4 +224,6 @@ deviation note — but nothing in this design touches the current instrument.
 - granite-docling and Qwen-VL small variants remain T3 candidates; admitting
   them is an evidence decision, not an architecture change.
 - Text-layer-aware PDF shortcut (skip OCR for born-digital pages) — explicitly
-  deferred; revisit after M2.
+  deferred; revisit after M2. **[Status 2026-08-03: revisited by openspec
+  change `triage-single-entry` (#35) — per-page measurement-based triage with
+  the §5.2 accepted re-OCR cost superseded for text-bearing pages.]**
