@@ -93,6 +93,24 @@ struct Consensus: AsyncParsableCommand {
         }
         let est = summary.estimate
         print("adjudicator: \(est.adjudicator)")
+        // #39: the single-consensus check — competence below is only
+        // meaningful if this held. untestable ≠ passed; both are disclosed,
+        // and no line at all means the check did not run (majority, rover).
+        if let check = summary.singleConsensus {
+            var line: String
+            switch check.verdict {
+            case "passed":
+                line = "single-consensus: passed — eigenvalue ratio "
+                    + (check.ratio.map { String(format: "%.2f", $0) } ?? "n/a")
+            default:
+                line = "single-consensus: \(check.verdict) — \(check.reason ?? "unspecified")"
+            }
+            if !check.excludedEngines.isEmpty {
+                line += " (excluded: \(check.excludedEngines.joined(separator: ", "))"
+                    + " — no co-answer data)"
+            }
+            print(line)
+        }
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
         // solo = single-engine items the aligner never grouped — NOT disputes
         // (#38: the ⚠ marks used to read as "engines disagreed here").

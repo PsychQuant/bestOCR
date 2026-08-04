@@ -620,6 +620,24 @@ public actor BestOCRMCPServer {
         }
         let est = summary.estimate
         lines.append("adjudicator: \(est.adjudicator)")
+        // #39: the single-consensus check — competence below is only
+        // meaningful if this held. untestable ≠ passed; both are disclosed,
+        // and no line at all means the check did not run (majority, rover).
+        if let check = summary.singleConsensus {
+            var line: String
+            switch check.verdict {
+            case "passed":
+                line = "single-consensus: passed — eigenvalue ratio "
+                    + (check.ratio.map { String(format: "%.2f", $0) } ?? "n/a")
+            default:
+                line = "single-consensus: \(check.verdict) — \(check.reason ?? "unspecified")"
+            }
+            if !check.excludedEngines.isEmpty {
+                line += " (excluded: \(check.excludedEngines.joined(separator: ", "))"
+                    + " — no co-answer data)"
+            }
+            lines.append(line)
+        }
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
         // solo = single-engine items the aligner never grouped — NOT disputes (#38).
         let solo = est.items.filter { item in
