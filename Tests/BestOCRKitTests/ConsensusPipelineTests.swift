@@ -214,8 +214,11 @@ struct ConsensusPipelineTests {
     }
 
     @Test func zeroCoAnswerIsRefusedNotReportedAsConsensus() async throws {
-        // #13 F7: two OCRResults ≠ two effective informants. If no aligned
-        // item has ≥2 responses there is no consensus to report.
+        // #13 F7 → upgraded by #38: two OCRResults ≠ two effective informants.
+        // Zero co-answered items used to THROW; the co-answer gate now returns
+        // an explicit refused report instead — same protection, but the caller
+        // gets the alignment diagnostics rather than a bare error (a refusal
+        // is a measurement outcome, not a tool failure).
         let (tmp, img, runLog) = try fixtureSetup()
         // Unequal item counts + zero similarity: no LCS anchor, no equal-gap
         // positional pair (that heuristic deliberately marries equal-length
@@ -224,13 +227,19 @@ struct ConsensusPipelineTests {
             StubEngine(id: "A", availability: .available, text: "aaaaaaaa"),
             StubEngine(id: "B", availability: .available, text: "z1\nz2\nz3"),
         ])
-        await #expect(throws: OCREngineError.self) {
-            _ = try await ConsensusPipeline.execute(
-                inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
-                pageSpec: "", languages: [], docType: "test",
-                outDir: tmp.appendingPathComponent("out"), registry: registry,
-                runLog: runLog)
-        }
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        #expect(summary.refused)
+        #expect(summary.refusalReason?.contains("co_answer_share") == true)
+        #expect(summary.estimate.diagnostics.overallCompetence == nil)  // no estimator ran
+        // The refused report file carries the diagnostics.
+        let data = try Data(contentsOf: summary.outputReport)
+        let report = try JSONDecoder().decode(ConsensusReport.self, from: data)
+        #expect(report.refused)
+        #expect(report.overallCompetence == nil)
     }
 
     @Test func reportCarriesCoAnswerShareAndSilentEngines() async throws {
@@ -427,5 +436,84 @@ struct ConsensusPipelineTests {
         #expect(json?["overall_competence"] != nil)
         let low = json?["low_consensus"] as? [[String: Any]]
         #expect((low?.count ?? 0) >= 1, "the A/B-vs-C fork must surface in low_consensus")
+    }
+
+    // MARK: - #38: co-answer refusal gate + honest report shape
+
+    private func soloHeavyItems() -> [AlignedItem] {
+        // Reproduces the #38 shape: overwhelmingly single-engine items
+        // (alignment never grouped the engines), a couple of co-answered ones.
+        var items: [AlignedItem] = []
+        for i in 0..<28 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["doc.marker": "cell-\(i)"]))
+        }
+        for i in 28..<30 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["vision": "line-\(i)", "ext.surya": "line-\(i)"]))
+        }
+        return items
+    }
+
+    @Test func coAnswerGateRefusesDegenerateAlignment() {
+        let items = soloHeavyItems()
+        let share = ConsensusPipeline.coAnswerShare(of: items)
+        #expect(share < 0.2)
+        let reason = ConsensusPipeline.coAnswerGate(items: items, threshold: 0.2)
+        #expect(reason != nil)
+        #expect(reason?.contains("co_answer_share") == true)
+    }
+
+    @Test func coAnswerGatePassesHealthyAlignment() {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)"]))
+        }
+        #expect(ConsensusPipeline.coAnswerGate(items: items, threshold: 0.2) == nil)
+    }
+
+    @Test func gateThresholdEnvOverrideWithGarbageProtection() {
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: [:]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "0.5"]) == 0.5)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "banana"]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "-1"]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "1.5"]) == 0.2)
+    }
+
+    @Test func refusedReportShapeKeepsDiagnosticsDropsCompetence() throws {
+        let items = soloHeavyItems()
+        let report = ConsensusReport.refused(items: items,
+                                             engines: ["doc.marker", "vision", "ext.surya"],
+                                             skipped: [:], adjudicator: "ds-lite",
+                                             reason: "co_answer_share 0.067 below threshold 0.2")
+        #expect(report.refused)
+        #expect(report.refusalReason?.contains("co_answer_share") == true)
+        #expect(report.overallCompetence == nil)       // no estimator ran — no competence
+        #expect(report.iterations == nil)
+        #expect(report.responseCounts?["1"] == 28)     // the 96.7%-style distribution
+        #expect(report.responseCounts?["2"] == 2)
+        #expect(report.coAnswerShare < 0.2)
+        // Round-trip: refused shape survives encode/decode (additive fields).
+        let data = try JSONEncoder().encode(report)
+        let decoded = try JSONDecoder().decode(ConsensusReport.self, from: data)
+        #expect(decoded.refused)
+        #expect(decoded.responseCounts?["1"] == 28)
+    }
+
+    @Test func normalReportCarriesInformativeItemsAndResponseCounts() throws {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)"]))
+        }
+        let estimate = ConsensusEstimator.estimate(items: items)
+        let report = ConsensusReport(estimate: estimate, engines: ["a", "b"], skipped: [:])
+        #expect(report.refused == false)
+        #expect(report.informativeItems?["a"] == 10)
+        #expect(report.responseCounts?["2"] == 10)
+        // Legacy decode: old report JSON without the new keys → refused=false, nils.
+        let legacy = try JSONDecoder().decode(ConsensusReport.self, from: JSONEncoder().encode(report))
+        #expect(legacy.refused == false)
     }
 }

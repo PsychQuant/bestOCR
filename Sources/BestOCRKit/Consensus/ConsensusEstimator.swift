@@ -120,6 +120,7 @@ public enum ConsensusEstimator {
         // Overall competence: pooled Laplace across kinds, uninformative
         // items excluded — the same rule as the M-step.
         var overall: [String: Double] = [:]
+        var informativeCounts: [String: Int] = [:]
         for engine in engines {
             var n = 0, correct = 0
             for (idx, item) in items.enumerated() {
@@ -129,6 +130,9 @@ public enum ConsensusEstimator {
                 if r.canonical == assignment[idx] { correct += 1 }
             }
             overall[engine] = Double(correct + 1) / Double(n + 2)
+            // #38: carry n with the figure — (0+1)/(0+2) is a prior, not a
+            // measurement, and only n makes the difference visible.
+            informativeCounts[engine] = n
         }
 
         return ConsensusEstimate(
@@ -142,7 +146,8 @@ public enum ConsensusEstimator {
                                                 competence: perKind,
                                                 iterations: iterations,
                                                 converged: converged,
-                                                confusion: nil))
+                                                confusion: nil,
+                                                informativeItems: informativeCounts))
     }
 
     // MARK: - Internals

@@ -263,4 +263,24 @@ struct ConsensusEstimatorTests {
         #expect(ab == 1.0 && ba == 1.0, "A-B agreement must be 1.0 and symmetric")
         #expect(ac == 0.0, "A-C agreement must be 0.0")
     }
+
+    // MARK: - #38: informative-item counts ride with competence
+
+    @Test func overallCompetenceCarriesInformativeCounts() {
+        // a/b co-answer three items (informative); c answers one solo item
+        // (supporters < 2 → uninformative) — its 0.5 is the bare prior and
+        // the report must be able to say so via n.
+        var items: [AlignedItem] = []
+        for i in 0..<3 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "same-\(i)", "b": "same-\(i)"]))
+        }
+        items.append(AlignedItem(key: ItemKey(page: 1, index: 9, kind: .proseLine),
+                                 responses: ["c": "alone"]))
+        let estimate = ConsensusEstimator.estimate(items: items)
+        let n = estimate.diagnostics.informativeItems
+        #expect(n?["a"] == 3)
+        #expect(n?["b"] == 3)
+        #expect(n?["c"] == 0)   // prior-only engine is visibly n=0, not silently 0.5
+    }
 }

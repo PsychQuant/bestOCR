@@ -12,6 +12,26 @@ public struct ConsensusRunSummary: Sendable {
     /// True when this run replaced existing consensus artifacts for the same
     /// stem/outDir (#13 F15c) — surfaced, never silent.
     public let overwrote: Bool
+    /// #38: the run refused to estimate — co-answer share below threshold
+    /// means competence would measure alignment failure, not engine quality.
+    /// A refusal is a legitimate measurement outcome, not a tool error.
+    public let refused: Bool
+    public let refusalReason: String?
+
+    public init(outputMarkdown: URL, outputReport: URL, engines: [String],
+                skipped: [String: String], estimate: ConsensusEstimate,
+                runID: String, overwrote: Bool,
+                refused: Bool = false, refusalReason: String? = nil) {
+        self.outputMarkdown = outputMarkdown
+        self.outputReport = outputReport
+        self.engines = engines
+        self.skipped = skipped
+        self.estimate = estimate
+        self.runID = runID
+        self.overwrote = overwrote
+        self.refused = refused
+        self.refusalReason = refusalReason
+    }
 }
 
 /// Multi-engine consensus flow (#11): run N engines over the same normalized
@@ -80,6 +100,14 @@ public enum ConsensusPipeline {
         var pages: Set<Int> = []
         for r in results.values { for p in r.pages { pages.insert(p.page) } }
 
+        return adjudicator.adjudicate(items: alignedItems(results: results))
+    }
+
+    /// Page-wise extract + align, shared by adjudication and the #38
+    /// co-answer gate (which must see the items BEFORE any estimator runs).
+    public static func alignedItems(results: [String: OCRResult]) -> [AlignedItem] {
+        var pages: Set<Int> = []
+        for r in results.values { for p in r.pages { pages.insert(p.page) } }
         var allItems: [AlignedItem] = []
         for page in pages.sorted() {
             var extractions: [String: [ExtractedItem]] = [:]
@@ -92,7 +120,54 @@ public enum ConsensusPipeline {
             allItems.append(contentsOf: ConsensusAlignment.align(page: page, extractions: extractions,
                                                                  degenerate: degenerate))
         }
-        return adjudicator.adjudicate(items: allItems)
+        return allItems
+    }
+
+    // MARK: - #38 co-answer gate
+
+    /// Share of aligned items with ≥2 non-empty responses — computed on
+    /// AlignedItems so the gate can run before the estimator (the report's
+    /// own figure is computed later from verdicts; same formula).
+    public static func coAnswerShare(of items: [AlignedItem]) -> Double {
+        guard !items.isEmpty else { return 0 }
+        let coAnswered = items.filter { item in
+            item.responses.values.filter { !$0.normalized.isEmpty }.count >= 2
+        }.count
+        return Double(coAnswered) / Double(items.count)
+    }
+
+    /// Response-count distribution ("1" → 1328 …): how many items got how
+    /// many engine responses — the structural picture behind a low share.
+    public static func responseCounts(of items: [AlignedItem]) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for item in items {
+            let n = item.responses.values.filter { !$0.normalized.isEmpty }.count
+            counts["\(n)", default: 0] += 1
+        }
+        return counts
+    }
+
+    /// Default 0.2 — a deliberately LOW bar that only refuses plainly
+    /// degenerate runs (#38 measured 0.0867); uncalibrated single-sample
+    /// induction, env-overridable, evidence-pending (same discipline as the
+    /// triage thresholds). Garbage values fall back to the default.
+    public static func minCoAnswerThreshold(
+        env: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Double {
+        guard let raw = env["BESTOCR_CONSENSUS_MIN_COANSWER"], let v = Double(raw),
+              v > 0, v <= 1 else { return 0.2 }
+        return v
+    }
+
+    /// nil = proceed; a String = refuse with this reason. Competence computed
+    /// from near-zero co-answers is not a weak estimate of engine quality —
+    /// it is an estimate of something else wearing the same shape (#38).
+    public static func coAnswerGate(items: [AlignedItem], threshold: Double) -> String? {
+        let share = coAnswerShare(of: items)
+        guard share < threshold else { return nil }
+        return "co_answer_share \(String(format: "%.4f", share)) below threshold "
+            + "\(String(format: "%.2f", threshold)) — alignment mostly never happened; "
+            + "competence would measure segmentation mismatch, not engine quality"
     }
 
     // MARK: - Outputs
@@ -233,7 +308,42 @@ public enum ConsensusPipeline {
                 adjudicator = PriorWeightedAdjudicator.fromEvidence(
                     store, engineIDs: results.keys.sorted())
             }
-            estimate = adjudicate(results: results, adjudicator: adjudicator)
+            // #38 co-answer gate — BEFORE any estimator: competence computed
+            // from near-zero co-answers measures segmentation mismatch, not
+            // engine quality. A refusal is a measurement outcome (exit 0,
+            // full alignment diagnostics), not a tool error. Pooling
+            // adjudicators only; ROVER's confusion-network alignment is a
+            // different model with its own co-answer semantics (out of scope).
+            let items = alignedItems(results: results)
+            if let reason = coAnswerGate(items: items,
+                                         threshold: minCoAnswerThreshold()) {
+                let engines = results.keys.sorted()
+                let report = ConsensusReport.refused(items: items, engines: engines,
+                                                     skipped: skipped,
+                                                     adjudicator: adjudicatorID,
+                                                     reason: reason)
+                try FileManager.default.createDirectory(at: outDir,
+                                                        withIntermediateDirectories: true)
+                let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+                let mdURL = outDir.appendingPathComponent("\(stem).consensus.md")
+                try ("# Consensus refused\n\n\(reason)\n\nSee \(stem).consensus.json "
+                     + "for the alignment diagnostics (response-count distribution, "
+                     + "agreement matrix). No competence was estimated.\n")
+                    .write(to: mdURL, atomically: true, encoding: .utf8)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
+                try encoder.encode(report).write(to: jsonURL, options: .atomic)
+                return ConsensusRunSummary(
+                    outputMarkdown: mdURL, outputReport: jsonURL, engines: engines,
+                    skipped: skipped,
+                    estimate: ConsensusEstimate(adjudicator: adjudicatorID, items: [],
+                                                agreement: report.agreement,
+                                                diagnostics: AdjudicatorDiagnostics()),
+                    runID: "", overwrote: false,
+                    refused: true, refusalReason: reason)
+            }
+            estimate = adjudicator.adjudicate(items: items)
         }
         // Two OCRResults are not two effective informants: without a single
         // item co-answered with REAL content (empty placeholders abstain)
@@ -321,6 +431,16 @@ struct ConsensusReport: Codable {
     /// in `engines` yet are absent from the competence maps; called out
     /// instead of silently missing.
     let enginesWithoutAlignedItems: [String]
+    /// #38: the run refused to estimate (co-answer gate). refused reports
+    /// keep alignment diagnostics and carry NO competence — the two states
+    /// must never look alike.
+    let refused: Bool
+    let refusalReason: String?
+    /// Response-count distribution over aligned items ("1" → solo items …).
+    let responseCounts: [String: Int]?
+    /// Per-engine informative-item counts behind overallCompetence (#38):
+    /// n = 0 → the figure is the bare Laplace prior, not a measurement.
+    let informativeItems: [String: Int]?
     /// `nil` when the adjudicator has no competence notion — distinct from an
     /// empty map, which means it has one and nothing qualified (#17 §4.2).
     let overallCompetence: [String: Double]?
@@ -338,6 +458,10 @@ struct ConsensusReport: Codable {
         case overallCompetence = "overall_competence"
         case competenceByKind = "competence_by_kind"
         case lowConsensus = "low_consensus"
+        case refused
+        case refusalReason = "refusal_reason"
+        case responseCounts = "response_counts"
+        case informativeItems = "informative_items"
     }
 
     /// Custom decode: fields added after the first release default instead
@@ -356,6 +480,10 @@ struct ConsensusReport: Codable {
         self.coAnswerShare = try c.decodeIfPresent(Double.self, forKey: .coAnswerShare) ?? 0
         self.enginesWithoutAlignedItems =
             try c.decodeIfPresent([String].self, forKey: .enginesWithoutAlignedItems) ?? []
+        self.refused = try c.decodeIfPresent(Bool.self, forKey: .refused) ?? false
+        self.refusalReason = try c.decodeIfPresent(String.self, forKey: .refusalReason)
+        self.responseCounts = try c.decodeIfPresent([String: Int].self, forKey: .responseCounts)
+        self.informativeItems = try c.decodeIfPresent([String: Int].self, forKey: .informativeItems)
         self.overallCompetence = try c.decodeIfPresent([String: Double].self, forKey: .overallCompetence)
         self.competenceByKind = try c.decodeIfPresent([String: [String: Double]].self,
                                                       forKey: .competenceByKind)
@@ -367,6 +495,12 @@ struct ConsensusReport: Codable {
         self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
         self.skipped = skipped
+        self.refused = false
+        self.refusalReason = nil
+        self.responseCounts = Dictionary(grouping: estimate.items) { item in
+            item.responses.values.filter { !$0.isEmpty }.count
+        }.reduce(into: [:]) { $0["\($1.key)"] = $1.value.count }
+        self.informativeItems = estimate.diagnostics.informativeItems
         self.itemCount = estimate.items.count
         self.adjudicator = estimate.adjudicator
         self.iterations = estimate.diagnostics.iterations
@@ -394,5 +528,37 @@ struct ConsensusReport: Codable {
                              confidence: $0.confidence,
                              responses: $0.responses)
         }
+    }
+
+    /// #38 refused shape: alignment diagnostics preserved, competence absent —
+    /// no estimator ran, so iterations/converged/competence are nil, never 0.
+    static func refused(items: [AlignedItem], engines: [String],
+                        skipped: [String: String], adjudicator: String,
+                        reason: String) -> ConsensusReport {
+        ConsensusReport(refusedWith: reason, items: items, engines: engines,
+                        skipped: skipped, adjudicator: adjudicator)
+    }
+
+    private init(refusedWith reason: String, items: [AlignedItem],
+                 engines: [String], skipped: [String: String], adjudicator: String) {
+        self.schemaVersion = Self.currentSchemaVersion
+        self.engines = engines
+        self.skipped = skipped
+        self.adjudicator = adjudicator
+        self.refused = true
+        self.refusalReason = reason
+        self.itemCount = items.count
+        self.iterations = nil
+        self.converged = nil
+        self.coAnswerShare = ConsensusPipeline.coAnswerShare(of: items)
+        self.responseCounts = ConsensusPipeline.responseCounts(of: items)
+        self.informativeItems = nil
+        self.enginesWithoutAlignedItems = engines.filter { engine in
+            !items.contains { ($0.responses[engine]?.normalized.isEmpty == false) }
+        }.sorted()
+        self.overallCompetence = nil
+        self.competenceByKind = nil
+        self.agreement = ConsensusEstimator.agreementMatrix(items: items, engines: engines)
+        self.lowConsensus = []
     }
 }

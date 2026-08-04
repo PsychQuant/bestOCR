@@ -136,6 +136,12 @@ public struct AdjudicatorDiagnostics: Sendable, Equatable {
     /// Engines whose prior was assumed rather than measured — nameable so a
     /// report can disclose which weights rest on an assumption.
     public let assumedPriorEngines: [String]?
+    /// Per-engine count of informative items behind `overallCompetence` (#38):
+    /// n = 0 means the reported figure is the bare Laplace prior, not a
+    /// measurement — without n the two are typographically identical. MVP:
+    /// filled by ds-lite; nil = the adjudicator did not report the count
+    /// (additive-optional, not the nil/[:] concept distinction).
+    public let informativeItems: [String: Int]?
 
     public init(overallCompetence: [String: Double]? = nil,
                 competence: [String: [ItemKind: Double]]? = nil,
@@ -144,7 +150,8 @@ public struct AdjudicatorDiagnostics: Sendable, Equatable {
                 confusion: [String: [String: [String: Double]]]? = nil,
                 itemParameters: [ItemParameterEntry]? = nil,
                 priorCompetence: [String: Double]? = nil,
-                assumedPriorEngines: [String]? = nil) {
+                assumedPriorEngines: [String]? = nil,
+                informativeItems: [String: Int]? = nil) {
         self.overallCompetence = overallCompetence
         self.competence = competence
         self.iterations = iterations
@@ -153,6 +160,7 @@ public struct AdjudicatorDiagnostics: Sendable, Equatable {
         self.itemParameters = itemParameters
         self.priorCompetence = priorCompetence
         self.assumedPriorEngines = assumedPriorEngines
+        self.informativeItems = informativeItems
     }
 }
 
