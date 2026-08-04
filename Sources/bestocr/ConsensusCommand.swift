@@ -82,15 +82,36 @@ struct Consensus: AsyncParsableCommand {
         for (id, reason) in summary.skipped.sorted(by: { $0.key < $1.key }) {
             print("skipped: \(id) — \(reason)")
         }
+        // #38: a refusal is a measurement outcome — say it first and plainly.
+        if summary.refused {
+            print("REFUSED: \(summary.refusalReason ?? "co-answer share below threshold")")
+            print("No competence was estimated — the report carries the alignment")
+            print("diagnostics (response-count distribution, agreement matrix).")
+            print("transcript: \(summary.outputMarkdown.path)")
+            print("report: \(summary.outputReport.path)")
+            return
+        }
         let est = summary.estimate
         print("adjudicator: \(est.adjudicator)")
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
-        print("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus)\(rounds)")
+        // solo = single-engine items the aligner never grouped — NOT disputes
+        // (#38: the ⚠ marks used to read as "engines disagreed here").
+        let solo = est.items.filter { item in
+            item.responses.values.filter { !$0.isEmpty }.count <= 1
+        }.count
+        print("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus, "
+              + "of which \(solo) solo/unaligned — single response, not a dispute)\(rounds)")
         // nil = this adjudicator has no competence notion; say so rather than
         // printing an empty list that reads like "everyone scored nothing" (#17).
         if let competence = est.diagnostics.overallCompetence {
+            let ns = est.diagnostics.informativeItems
             for (id, c) in competence.sorted(by: { $0.value > $1.value }) {
-                print(String(format: "competence: %@ %.3f", id, c))
+                // n makes a bare prior visibly different from a measurement (#38).
+                let suffix = ns.map { counts -> String in
+                    let n = counts[id] ?? 0
+                    return n == 0 ? " (prior — no informative items)" : " (n=\(n))"
+                } ?? ""
+                print(String(format: "competence: %@ %.3f%@", id, c, suffix))
             }
         } else {
             print("competence: n/a — \(est.adjudicator) has no competence model")

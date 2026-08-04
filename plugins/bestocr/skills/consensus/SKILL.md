@@ -23,6 +23,17 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
 
 ## 誠實邊界（必轉述）
 
+- **run 可能誠實拒絕（#38）**：co-answered items 佔比低於閾值（預設 0.2，
+  `BESTOCR_CONSENSUS_MIN_COANSWER` 覆寫）時輸出 `REFUSED` 而非 competence ——
+  對齊幾乎沒發生時，competence 量到的是切分不匹配、不是引擎品質。refused
+  報告保留全部對齊診斷（response-count 分佈、agreement 矩陣）供人工判讀，
+  必須原樣轉述、不可略過 refusal 自行摘要 items。
+- **competence 要連同 n 讀（#38）**：每個 competence 帶 informative-item 數
+  `(n=X)`；`(prior — no informative items)` 表示該值是 Laplace 先驗、不是量測
+  —— 轉述時不可把 n=0 的引擎與實測引擎並列比較。
+- **solo ≠ 分歧（#38）**：transcript 的 ⚠ 含「只有單一引擎回應、從未對齊」的
+  solo items —— 那是切分差異，不是引擎間對此內容有爭議。items 行的
+  solo/unaligned 計數要一併轉述。
 - **共識 ≠ 真值**：全體引擎同錯（同一難字大家都錯）時共識也錯。報告的
   `agreement` 矩陣是引擎間錯誤相關的診斷（相關性高會虛增 competence），
   MVP 只揭露不修正。

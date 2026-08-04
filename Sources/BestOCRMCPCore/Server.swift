@@ -609,15 +609,35 @@ public actor BestOCRMCPServer {
         for (id, reason) in summary.skipped.sorted(by: { $0.key < $1.key }) {
             lines.append("skipped: \(id) — \(reason)")
         }
+        // #38: a refusal is a measurement outcome — say it first and plainly.
+        if summary.refused {
+            lines.append("REFUSED: \(summary.refusalReason ?? "co-answer share below threshold")")
+            lines.append("No competence was estimated — the report carries the alignment")
+            lines.append("diagnostics (response-count distribution, agreement matrix).")
+            lines.append("transcript: \(summary.outputMarkdown.path)")
+            lines.append("report: \(summary.outputReport.path)")
+            return lines.joined(separator: "\n")
+        }
         let est = summary.estimate
         lines.append("adjudicator: \(est.adjudicator)")
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
-        lines.append("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus)\(rounds)")
+        // solo = single-engine items the aligner never grouped — NOT disputes (#38).
+        let solo = est.items.filter { item in
+            item.responses.values.filter { !$0.isEmpty }.count <= 1
+        }.count
+        lines.append("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus, "
+                     + "of which \(solo) solo/unaligned — single response, not a dispute)\(rounds)")
         // nil = this adjudicator has no competence notion; say so rather than
         // printing an empty list that reads like "everyone scored nothing" (#17).
         if let competence = est.diagnostics.overallCompetence {
+            let ns = est.diagnostics.informativeItems
             for (id, c) in competence.sorted(by: { $0.value > $1.value }) {
-                lines.append(String(format: "competence: %@ %.3f", id, c))
+                // n makes a bare prior visibly different from a measurement (#38).
+                let suffix = ns.map { counts -> String in
+                    let n = counts[id] ?? 0
+                    return n == 0 ? " (prior — no informative items)" : " (n=\(n))"
+                } ?? ""
+                lines.append(String(format: "competence: %@ %.3f%@", id, c, suffix))
             }
         } else {
             lines.append("competence: n/a — \(est.adjudicator) has no competence model")
