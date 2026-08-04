@@ -4,6 +4,9 @@ import Testing
 
 /// Cloud-flavored stub for the privacy-contract test (#13 F8).
 private struct CloudStubEngine: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     let id: String
     let family = EngineFamily.cloudReference
     var capabilities: EngineCapabilities {
@@ -20,6 +23,9 @@ private struct CloudStubEngine: OCREngine {
 
 /// Local family but network-reaching — the privacy gate must refuse it too.
 private struct NetworkStubEngine: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     let id: String
     let family = EngineFamily.classical
     var capabilities: EngineCapabilities {
@@ -36,6 +42,9 @@ private struct NetworkStubEngine: OCREngine {
 
 /// Stub whose recognize is "cancelled" — cancellation must propagate (#13 F11).
 private struct CancellingStubEngine: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     let id: String
     let family = EngineFamily.classical
     var capabilities: EngineCapabilities {

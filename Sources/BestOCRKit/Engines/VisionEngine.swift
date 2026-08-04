@@ -56,7 +56,17 @@ public struct VisionEngine: OCREngine {
         let condition = ConditionTuple(model: "vision", quant: "n/a", dpi: request.dpi,
                                        docType: request.docType, platform: "vision",
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: await resolveVersion().legacyToolVersion)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
     }
+
+    /// Vision has no version of its own — it ships with the OS, so the OS
+    /// version is the honest answer and it is `declared`, not probed.
+    public func resolveVersion() async -> EngineVersion {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return .single("macOS", "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)",
+                       resolution: .declared)
+    }
+
 }

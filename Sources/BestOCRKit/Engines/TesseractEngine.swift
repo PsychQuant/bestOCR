@@ -88,7 +88,25 @@ public struct TesseractEngine: OCREngine {
         let condition = ConditionTuple(model: "tesseract", quant: "n/a", dpi: request.dpi,
                                        docType: request.docType, platform: "tesseract",
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: await resolveVersion().legacyToolVersion)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
     }
+
+    /// Probes `tesseract --version`. A missing or silent binary yields the
+    /// absence case — recognition is not this method's concern and must not
+    /// fail because a version could not be read.
+    public func resolveVersion() async -> EngineVersion {
+        guard let binary = resolvedBinary() else { return .unavailable }
+        guard let result = try? Subprocess.run(binary, arguments: ["--version"], timeout: 10),
+              result.exitCode == 0 else { return .unavailable }
+        // First line reads like "tesseract 5.3.4"; take the token after the name.
+        let first = result.stdout.split(separator: "\n").first.map(String.init) ?? ""
+        let parts = first.split(separator: " ").map(String.init)
+        guard parts.count >= 2, parts[0].lowercased().contains("tesseract") else {
+            return .unavailable
+        }
+        return .single("tesseract", parts[1], resolution: .probed)
+    }
+
 }

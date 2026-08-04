@@ -95,4 +95,25 @@ enum AdapterProtocolV1 {
         }
         return .available
     }
+
+    /// The adapter's own tool version, from the same `probe` reply that
+    /// `probe(python:script:tool:installHint:)` uses for availability.
+    ///
+    /// Always `.adapterReported`: the adapter states its version, and bestOCR
+    /// has no way to confirm the value was read from the interpreter that will
+    /// actually run — a machine can hold several installs of the same package
+    /// under different interpreters. Labelling it is honest; treating it as
+    /// verified would not be.
+    static func probeVersion(python: URL, script: URL, tool: String) -> EngineVersion {
+        guard let run = try? Subprocess.run(python, arguments: [script.path, "probe"],
+                                            timeout: 60),
+              run.exitCode == 0,
+              let data = lastJSONLine(run.stdout),
+              let reply = try? JSONDecoder().decode(ProbeReply.self, from: data),
+              reply.ok,
+              let version = reply.version, !version.isEmpty else {
+            return .unavailable
+        }
+        return .single(reply.tool ?? tool, version, resolution: .adapterReported)
+    }
 }

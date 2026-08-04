@@ -76,7 +76,8 @@ public struct RunLogEntry: Codable, Sendable {
             docType: member?.condition.docType ?? "unspecified",
             platform: "consensus",
             hardware: member?.condition.hardware ?? "unknown",
-            instrument: BestOCRVersion.string)
+            instrument: BestOCRVersion.string,
+            toolVersion: Self.mergedToolVersion(ids: ids, results: results))
 
         var byPage: [Int: (seconds: Double, thermal: String, degenerate: Bool)] = [:]
         for id in ids {
@@ -97,6 +98,19 @@ public struct RunLogEntry: Codable, Sendable {
                             degenerateFlagged: acc.degenerate)
         }
         self.quality = quality
+    }
+
+    /// A consensus row is produced by several engines, so its version is all of
+    /// theirs. Taking only the first member's version would name one tool for
+    /// output the others also shaped. Members without a version are omitted
+    /// rather than represented by a placeholder; an all-empty result stays nil,
+    /// which the field already means as "unknown".
+    static func mergedToolVersion(ids: [String], results: [String: OCRResult]) -> String? {
+        let parts = ids.compactMap { id -> String? in
+            guard let version = results[id]?.condition.toolVersion else { return nil }
+            return "\(id)=\(version)"
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " | ")
     }
 }
 
@@ -133,4 +147,5 @@ public struct RunLog: Sendable {
             try line.write(to: fileURL)
         }
     }
+
 }

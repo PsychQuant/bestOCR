@@ -102,6 +102,18 @@ public protocol OCREngine: Sendable {
     /// Probes lazily and never throws — absence is reported as a value.
     func probe() async -> EngineAvailability
     func recognize(_ request: OCRRequest) async throws -> OCRResult
+    /// The version of the tool this engine drives, and how that version was
+    /// obtained (engine-version-provenance spec).
+    ///
+    /// Deliberately declared WITHOUT a default implementation: `tradeoffNote`
+    /// above uses an extension default, and the result is that an engine which
+    /// says nothing silently reports nil. Version data has the same failure
+    /// shape but worse consequences — a row with no version cannot be compared
+    /// across a tool upgrade — so omitting it must fail to compile instead.
+    ///
+    /// `async` because some sources need I/O: a CLI has to be executed, a
+    /// service has to be asked.
+    func resolveVersion() async -> EngineVersion
 }
 
 extension OCREngine {

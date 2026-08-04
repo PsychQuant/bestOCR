@@ -4,6 +4,9 @@ import Testing
 
 /// Always-available engine whose recognize always throws — fallback fodder.
 struct FailingEngine: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     let id: String
     let family = EngineFamily.classical
     var capabilities: EngineCapabilities {

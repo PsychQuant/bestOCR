@@ -9,6 +9,9 @@ import Testing
 /// before.
 struct DocumentClassRoutingTests {
     struct AssemblyStub: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
         let id: String
         let assembly: AssemblyCapability
         let family = EngineFamily.documentPipeline

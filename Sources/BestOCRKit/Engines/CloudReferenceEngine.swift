@@ -73,7 +73,8 @@ public struct CloudReferenceEngine: OCREngine {
                                        dpi: request.dpi, docType: request.docType,
                                        platform: provider.rawValue,
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: await resolveVersion().legacyToolVersion)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
     }
 
@@ -84,4 +85,11 @@ public struct CloudReferenceEngine: OCREngine {
         default: return "image/png"   // PageRenderer emits PNG
         }
     }
+
+    /// A cloud provider does not tell us which model version served the
+    /// request, and it can change server-side without notice. The requested
+    /// model id is already recorded as the condition's model; repeating it
+    /// here would dress a request parameter up as an observed version.
+    public func resolveVersion() async -> EngineVersion { .unavailable }
+
 }

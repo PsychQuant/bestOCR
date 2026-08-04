@@ -287,4 +287,14 @@ extension DocumentPipelineEngine {
             tradeoff: "best inline-math LaTeX of the engines compared in #15. Layout is only fragile in --mode balanced, whose VLM layout goes through llama.cpp's json_schema → GBNF path; the adapter lets marker take its device default (fast on Apple Silicon: CPU layout detectors, so layout stays OUT of the grammar path). Cost: marker_single reloads its models per page, so per-page seconds include that reload",
             invocation: .perPage)
     }
+
+    /// Asks the adapter for its version without running OCR. The same value
+    /// also reaches the condition tuple during recognition; this method is the
+    /// answer available before any page is read.
+    public func resolveVersion() async -> EngineVersion {
+        guard let python = AdapterProtocolV1.locatePython(),
+              let script = scriptURL() else { return .unavailable }
+        return AdapterProtocolV1.probeVersion(python: python, script: script, tool: tool)
+    }
+
 }

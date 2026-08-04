@@ -153,4 +153,14 @@ extension ExternalToolEngine {
             installHint: "pip install \"surya-ocr<0.20\"  (0.17.x generation — see tradeoff)",
             tradeoffNote: "deliberately pinned to the surya-ocr 0.17.x classical det+rec generation — self-contained, no model server, so it survives llama-server breakage (#15). surya-2 (0.22.x) is a different architecture (0.65B VLM behind llama-server/vllm) and is a separate engine candidate (#29), not an upgrade of this one")
     }
+
+    /// Asks the adapter for its version without running OCR. The same value
+    /// also reaches the condition tuple during recognition; this method is the
+    /// answer available before any page is read.
+    public func resolveVersion() async -> EngineVersion {
+        guard let python = Self.locatePython(),
+              let script = scriptURL() else { return .unavailable }
+        return AdapterProtocolV1.probeVersion(python: python, script: script, tool: tool)
+    }
+
 }

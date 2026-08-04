@@ -3,6 +3,9 @@ import Testing
 
 /// Minimal stub for registry/recommender tests.
 struct StubEngine: OCREngine {
+    /// Stub drives no real tool, so the absence case is the honest answer.
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     let id: String
     let family = EngineFamily.classical
     let availability: EngineAvailability

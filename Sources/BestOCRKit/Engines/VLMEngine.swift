@@ -95,7 +95,8 @@ public struct VLMEngine: OCREngine {
                                        dpi: request.dpi, docType: request.docType,
                                        platform: "ollama",
                                        hardware: HostInfo.hardwareLabel(),
-                                       instrument: BestOCRVersion.string)
+                                       instrument: BestOCRVersion.string,
+                                       toolVersion: await resolveVersion().legacyToolVersion)
         return OCRResult(engineID: id, pages: pageResults, condition: condition)
     }
 
@@ -119,4 +120,13 @@ public struct VLMEngine: OCREngine {
         guard let colon = tag.firstIndex(of: ":") else { return "default" }
         return String(tag[tag.index(after: colon)...])
     }
+
+    /// The model tag is configuration rather than something discovered, so it
+    /// is `declared`. The host runtime is reported alongside it because the
+    /// same tag can behave differently across runtime versions.
+    public func resolveVersion() async -> EngineVersion {
+        EngineVersion(components: ["model": resolvedModelTag, "runtime": "ollama"],
+                      resolution: .declared)
+    }
+
 }
