@@ -17,11 +17,15 @@ public struct ConsensusRunSummary: Sendable {
     /// A refusal is a legitimate measurement outcome, not a tool error.
     public let refused: Bool
     public let refusalReason: String?
+    /// #39: single-consensus validity check outcome. nil = check did not run
+    /// (majority, rover, or a co-answer refusal that never got that far).
+    public let singleConsensus: SingleConsensusCheck?
 
     public init(outputMarkdown: URL, outputReport: URL, engines: [String],
                 skipped: [String: String], estimate: ConsensusEstimate,
                 runID: String, overwrote: Bool,
-                refused: Bool = false, refusalReason: String? = nil) {
+                refused: Bool = false, refusalReason: String? = nil,
+                singleConsensus: SingleConsensusCheck? = nil) {
         self.outputMarkdown = outputMarkdown
         self.outputReport = outputReport
         self.engines = engines
@@ -31,12 +35,21 @@ public struct ConsensusRunSummary: Sendable {
         self.overwrote = overwrote
         self.refused = refused
         self.refusalReason = refusalReason
+        self.singleConsensus = singleConsensus
     }
 }
 
 /// Multi-engine consensus flow (#11): run N engines over the same normalized
-/// input → extract + align items per page → Dawid-Skene-lite adjudication →
-/// consensus transcript + machine-readable report.
+/// input → extract + align items per page → co-answer gate (#38) →
+/// single-consensus validity check (#39) → adjudication → consensus
+/// transcript + machine-readable report.
+///
+/// The two gates are ordered, and the order is semantic, not incidental:
+/// the co-answer gate refuses runs where alignment mostly never happened
+/// (nothing to test), the single-consensus check refuses runs where the
+/// aligned agreement structure is inconsistent with one latent answer key
+/// (the pooling estimators' own validity condition). Only a run that passes
+/// both reaches an estimator.
 ///
 /// `adjudicate` and `writeOutputs` are pure/FS-local and unit-tested;
 /// `execute` is the thin engine-running shell mirroring `RunPipeline` idioms.
@@ -170,6 +183,37 @@ public enum ConsensusPipeline {
             + "competence would measure segmentation mismatch, not engine quality"
     }
 
+    // MARK: - #39 single-consensus gate
+
+    /// The CCT validity condition of the pooling estimators themselves:
+    /// the agreement structure must be consistent with ONE latent answer key
+    /// (dominant first eigenvalue + no zero first-factor loadings) or
+    /// per-engine competence is an estimate of a quantity that does not
+    /// exist for the run. Ordering is fixed: the #38 co-answer gate runs
+    /// first (an alignment that barely happened cannot be tested for
+    /// partition structure), then this, then the estimator.
+    ///
+    /// nil refusalReason = proceed; the check outcome (passed / untestable)
+    /// is still recorded so "could not test" never renders as "tested and
+    /// held". Non-pooling adjudicators (majority, rover) get (nil, nil) —
+    /// no competence claim, no assumption to guard (issue Non-Goal).
+    public static func singleConsensusGate(
+        items: [AlignedItem], engines: [String], adjudicatorID: String
+    ) -> (refusalReason: String?, check: SingleConsensusCheck?) {
+        guard AdjudicatorRegistry.estimatesCompetence(adjudicatorID) else {
+            return (nil, nil)
+        }
+        let agreement = ConsensusEstimator.agreementMatrix(items: items, engines: engines)
+        let result = ConsensusValidity.singleConsensusCheck(
+            agreement: agreement, engines: engines,
+            minRatio: ConsensusValidity.minEigenRatio())
+        let check = SingleConsensusCheck(verdict: result.verdict, excluded: result.excluded)
+        if case .failed(let reason) = result.verdict {
+            return (reason, check)
+        }
+        return (nil, check)
+    }
+
     // MARK: - Outputs
 
     /// Writes `<stem>.consensus.md` (transcript; low-consensus items prefixed
@@ -178,7 +222,9 @@ public enum ConsensusPipeline {
     /// individual lines; the report is the primary artifact for review.
     public static func writeOutputs(estimate: ConsensusEstimate, engines: [String],
                                     skipped: [String: String], inputPath: String,
-                                    outDir: URL) throws -> (markdown: URL, report: URL) {
+                                    outDir: URL,
+                                    singleConsensus: SingleConsensusCheck? = nil)
+        throws -> (markdown: URL, report: URL) {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
 
@@ -194,7 +240,8 @@ public enum ConsensusPipeline {
         let mdURL = outDir.appendingPathComponent("\(stem).consensus.md")
         try lines.joined(separator: "\n").write(to: mdURL, atomically: true, encoding: .utf8)
 
-        let report = ConsensusReport(estimate: estimate, engines: engines, skipped: skipped)
+        let report = ConsensusReport(estimate: estimate, engines: engines, skipped: skipped,
+                                     singleConsensus: singleConsensus)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
@@ -295,6 +342,7 @@ public enum ConsensusPipeline {
         }
 
         let estimate: ConsensusEstimate
+        var singleConsensus: SingleConsensusCheck?
         if AdjudicatorRegistry.isSequenceAdjudicator(adjudicatorID) {
             // Phase 5: ROVER consumes a confusion network built from raw page
             // text, not aligned items — the two inputs are genuinely different.
@@ -317,31 +365,25 @@ public enum ConsensusPipeline {
             let items = alignedItems(results: results)
             if let reason = coAnswerGate(items: items,
                                          threshold: minCoAnswerThreshold()) {
-                let engines = results.keys.sorted()
-                let report = ConsensusReport.refused(items: items, engines: engines,
-                                                     skipped: skipped,
-                                                     adjudicator: adjudicatorID,
-                                                     reason: reason)
-                try FileManager.default.createDirectory(at: outDir,
-                                                        withIntermediateDirectories: true)
-                let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
-                let mdURL = outDir.appendingPathComponent("\(stem).consensus.md")
-                try ("# Consensus refused\n\n\(reason)\n\nSee \(stem).consensus.json "
-                     + "for the alignment diagnostics (response-count distribution, "
-                     + "agreement matrix). No competence was estimated.\n")
-                    .write(to: mdURL, atomically: true, encoding: .utf8)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
-                try encoder.encode(report).write(to: jsonURL, options: .atomic)
-                return ConsensusRunSummary(
-                    outputMarkdown: mdURL, outputReport: jsonURL, engines: engines,
-                    skipped: skipped,
-                    estimate: ConsensusEstimate(adjudicator: adjudicatorID, items: [],
-                                                agreement: report.agreement,
-                                                diagnostics: AdjudicatorDiagnostics()),
-                    runID: "", overwrote: false,
-                    refused: true, refusalReason: reason)
+                // The single-consensus check did not run for a co-answer
+                // refusal — nil check, honestly (order: #38 before #39).
+                return try refusedRun(reason: reason, check: nil, items: items,
+                                      engines: results.keys.sorted(),
+                                      skipped: skipped, adjudicatorID: adjudicatorID,
+                                      inputPath: inputPath, outDir: outDir)
+            }
+            // #39 single-consensus gate (see `singleConsensusGate` doc for
+            // the ordering contract): failed → refuse with the check
+            // recorded; passed / untestable → proceed with it disclosed.
+            let gate = singleConsensusGate(items: items,
+                                           engines: results.keys.sorted(),
+                                           adjudicatorID: adjudicatorID)
+            singleConsensus = gate.check
+            if let reason = gate.refusalReason {
+                return try refusedRun(reason: reason, check: gate.check, items: items,
+                                      engines: results.keys.sorted(),
+                                      skipped: skipped, adjudicatorID: adjudicatorID,
+                                      inputPath: inputPath, outDir: outDir)
             }
             estimate = adjudicator.adjudicate(items: items)
         }
@@ -368,7 +410,8 @@ public enum ConsensusPipeline {
         let outputs = try writeOutputs(estimate: estimate,
                                        engines: results.keys.sorted(),
                                        skipped: skipped,
-                                       inputPath: inputPath, outDir: outDir)
+                                       inputPath: inputPath, outDir: outDir,
+                                       singleConsensus: singleConsensus)
 
         // Provenance (#12): one explicit composite entry — the ensemble is
         // the unit under measurement. Promotion to evidence rows stays behind
@@ -390,7 +433,46 @@ public enum ConsensusPipeline {
                                    skipped: skipped,
                                    estimate: estimate,
                                    runID: entry.id,
-                                   overwrote: overwrote)
+                                   overwrote: overwrote,
+                                   singleConsensus: singleConsensus)
+    }
+
+    /// Shared refusal writer for the #38 co-answer gate and the #39
+    /// single-consensus gate: refused markdown + report, no runlog quality
+    /// entry (runID "" — structurally un-ingestable), returned as a summary
+    /// with exit-0 semantics (a refusal is a measurement outcome, not a
+    /// tool error).
+    private static func refusedRun(reason: String, check: SingleConsensusCheck?,
+                                   items: [AlignedItem], engines: [String],
+                                   skipped: [String: String], adjudicatorID: String,
+                                   inputPath: String, outDir: URL)
+        throws -> ConsensusRunSummary {
+        let report = ConsensusReport.refused(items: items, engines: engines,
+                                             skipped: skipped,
+                                             adjudicator: adjudicatorID,
+                                             reason: reason,
+                                             singleConsensus: check)
+        try FileManager.default.createDirectory(at: outDir,
+                                                withIntermediateDirectories: true)
+        let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+        let mdURL = outDir.appendingPathComponent("\(stem).consensus.md")
+        try ("# Consensus refused\n\n\(reason)\n\nSee \(stem).consensus.json "
+             + "for the alignment diagnostics (response-count distribution, "
+             + "agreement matrix). No competence was estimated.\n")
+            .write(to: mdURL, atomically: true, encoding: .utf8)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
+        try encoder.encode(report).write(to: jsonURL, options: .atomic)
+        return ConsensusRunSummary(
+            outputMarkdown: mdURL, outputReport: jsonURL, engines: engines,
+            skipped: skipped,
+            estimate: ConsensusEstimate(adjudicator: adjudicatorID, items: [],
+                                        agreement: report.agreement,
+                                        diagnostics: AdjudicatorDiagnostics()),
+            runID: "", overwrote: false,
+            refused: true, refusalReason: reason,
+            singleConsensus: check)
     }
 }
 
@@ -441,6 +523,10 @@ struct ConsensusReport: Codable {
     /// Per-engine informative-item counts behind overallCompetence (#38):
     /// n = 0 → the figure is the bare Laplace prior, not a measurement.
     let informativeItems: [String: Int]?
+    /// #39: single-consensus validity check outcome. nil = the check did not
+    /// run (pre-#39 report, majority, rover, or a co-answer refusal that
+    /// never got that far) — absence is never a verdict.
+    let singleConsensus: SingleConsensusCheck?
     /// `nil` when the adjudicator has no competence notion — distinct from an
     /// empty map, which means it has one and nothing qualified (#17 §4.2).
     let overallCompetence: [String: Double]?
@@ -462,6 +548,7 @@ struct ConsensusReport: Codable {
         case refusalReason = "refusal_reason"
         case responseCounts = "response_counts"
         case informativeItems = "informative_items"
+        case singleConsensus = "single_consensus"
     }
 
     /// Custom decode: fields added after the first release default instead
@@ -484,6 +571,8 @@ struct ConsensusReport: Codable {
         self.refusalReason = try c.decodeIfPresent(String.self, forKey: .refusalReason)
         self.responseCounts = try c.decodeIfPresent([String: Int].self, forKey: .responseCounts)
         self.informativeItems = try c.decodeIfPresent([String: Int].self, forKey: .informativeItems)
+        self.singleConsensus = try c.decodeIfPresent(SingleConsensusCheck.self,
+                                                     forKey: .singleConsensus)
         self.overallCompetence = try c.decodeIfPresent([String: Double].self, forKey: .overallCompetence)
         self.competenceByKind = try c.decodeIfPresent([String: [String: Double]].self,
                                                       forKey: .competenceByKind)
@@ -491,12 +580,14 @@ struct ConsensusReport: Codable {
         self.lowConsensus = try c.decode([LowConsensusItem].self, forKey: .lowConsensus)
     }
 
-    init(estimate: ConsensusEstimate, engines: [String], skipped: [String: String]) {
+    init(estimate: ConsensusEstimate, engines: [String], skipped: [String: String],
+         singleConsensus: SingleConsensusCheck? = nil) {
         self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
         self.skipped = skipped
         self.refused = false
         self.refusalReason = nil
+        self.singleConsensus = singleConsensus
         self.responseCounts = Dictionary(grouping: estimate.items) { item in
             item.responses.values.filter { !$0.isEmpty }.count
         }.reduce(into: [:]) { $0["\($1.key)"] = $1.value.count }
@@ -534,19 +625,23 @@ struct ConsensusReport: Codable {
     /// no estimator ran, so iterations/converged/competence are nil, never 0.
     static func refused(items: [AlignedItem], engines: [String],
                         skipped: [String: String], adjudicator: String,
-                        reason: String) -> ConsensusReport {
+                        reason: String,
+                        singleConsensus: SingleConsensusCheck? = nil) -> ConsensusReport {
         ConsensusReport(refusedWith: reason, items: items, engines: engines,
-                        skipped: skipped, adjudicator: adjudicator)
+                        skipped: skipped, adjudicator: adjudicator,
+                        singleConsensus: singleConsensus)
     }
 
     private init(refusedWith reason: String, items: [AlignedItem],
-                 engines: [String], skipped: [String: String], adjudicator: String) {
+                 engines: [String], skipped: [String: String], adjudicator: String,
+                 singleConsensus: SingleConsensusCheck?) {
         self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
         self.skipped = skipped
         self.adjudicator = adjudicator
         self.refused = true
         self.refusalReason = reason
+        self.singleConsensus = singleConsensus
         self.itemCount = items.count
         self.iterations = nil
         self.converged = nil

@@ -188,6 +188,18 @@ public enum AdjudicatorRegistry {
         make(id) != nil || makeSequence(id) != nil
     }
 
+    /// #39: does this adjudicator pool raters into a per-engine competence
+    /// model? Only those carry the CCT single-key assumption the
+    /// single-consensus check guards. `majority` claims no competence model
+    /// (no assumption to violate — issue Non-Goal); `rover` adjudicates a
+    /// confusion network, a different model with its own alignment semantics.
+    public static func estimatesCompetence(_ id: String) -> Bool {
+        [DawidSkeneLiteAdjudicator.id,
+         FullDawidSkeneAdjudicator.id,
+         PriorWeightedAdjudicator.id,
+         IRTAdjudicator.id].contains(id)
+    }
+
     /// `(id, guidance)` for every adjudicator, in display order. Phase 6: the
     /// selection surface states tradeoffs and never ranks — a single ordering
     /// would imply these models measure the same thing, which is exactly the

@@ -516,4 +516,160 @@ struct ConsensusPipelineTests {
         let legacy = try JSONDecoder().decode(ConsensusReport.self, from: JSONEncoder().encode(report))
         #expect(legacy.refused == false)
     }
+
+    // MARK: - #39: single-consensus validity gate
+
+    /// The #39 observed shape at item level: {a,b} co-answer and agree,
+    /// {c,d} co-answer and agree, and the two blocks never co-answer. Every
+    /// item has 2 responses, so the #38 co-answer gate passes — this is the
+    /// run the eigen check exists for.
+    private func partitionedItems() -> [AlignedItem] {
+        var items: [AlignedItem] = []
+        for i in 0..<6 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)"]))
+        }
+        for i in 6..<12 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["c": "y-\(i)", "d": "y-\(i)"]))
+        }
+        return items
+    }
+
+    @Test func estimatesCompetenceClassifiesAdjudicators() {
+        // Pooling-with-competence family — the check applies to all of them.
+        #expect(AdjudicatorRegistry.estimatesCompetence("ds-lite"))
+        #expect(AdjudicatorRegistry.estimatesCompetence("ds-full"))
+        #expect(AdjudicatorRegistry.estimatesCompetence("prior-weighted"))
+        #expect(AdjudicatorRegistry.estimatesCompetence("irt"))
+        // majority claims no competence model (no assumption to violate);
+        // rover adjudicates a confusion network, not pooled items.
+        #expect(!AdjudicatorRegistry.estimatesCompetence("majority"))
+        #expect(!AdjudicatorRegistry.estimatesCompetence("rover"))
+        #expect(!AdjudicatorRegistry.estimatesCompetence("no-such-adjudicator"))
+    }
+
+    @Test func partitionItemsRefuseWithRatioInReason() {
+        let gate = ConsensusPipeline.singleConsensusGate(
+            items: partitionedItems(), engines: ["a", "b", "c", "d"],
+            adjudicatorID: "ds-lite")
+        #expect(gate.refusalReason?.lowercased().contains("eigenvalue ratio") == true)
+        #expect(gate.check?.verdict == "failed")
+    }
+
+    @Test func majorityGateSkipsEigenCheck() {
+        // Issue Non-Goal: majority has no competence model, so there is no
+        // single-key assumption to violate — nil check, not "passed".
+        let gate = ConsensusPipeline.singleConsensusGate(
+            items: partitionedItems(), engines: ["a", "b", "c", "d"],
+            adjudicatorID: "majority")
+        #expect(gate.refusalReason == nil)
+        #expect(gate.check == nil)
+    }
+
+    @Test func healthyItemsPassGateWithCheckRecorded() {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)", "c": "x-\(i)"]))
+        }
+        let gate = ConsensusPipeline.singleConsensusGate(
+            items: items, engines: ["a", "b", "c"], adjudicatorID: "ds-lite")
+        #expect(gate.refusalReason == nil)
+        #expect(gate.check?.verdict == "passed")
+        #expect((gate.check?.ratio ?? 0) >= 3)
+        #expect(gate.check?.ratio?.isFinite == true)
+    }
+
+    @Test func twoEngineGateIsUntestableNotSilent() {
+        // Two co-answering engines cannot distinguish one culture from two.
+        // The run proceeds, but "could not test" is disclosed — it must
+        // never render as "tested and held".
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)"]))
+        }
+        let gate = ConsensusPipeline.singleConsensusGate(
+            items: items, engines: ["a", "b"], adjudicatorID: "ds-lite")
+        #expect(gate.refusalReason == nil)
+        #expect(gate.check?.verdict == "untestable")
+    }
+
+    @Test func reportRoundTripsSingleConsensusCheck() throws {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)", "c": "x-\(i)"]))
+        }
+        let gate = ConsensusPipeline.singleConsensusGate(
+            items: items, engines: ["a", "b", "c"], adjudicatorID: "ds-lite")
+        let estimate = ConsensusEstimator.estimate(items: items)
+        let report = ConsensusReport(estimate: estimate, engines: ["a", "b", "c"],
+                                     skipped: [:], singleConsensus: gate.check)
+        let decoded = try JSONDecoder().decode(ConsensusReport.self,
+                                               from: JSONEncoder().encode(report))
+        #expect(decoded.singleConsensus?.verdict == "passed")
+        #expect((decoded.singleConsensus?.ratio ?? 0) >= 3)
+        // JSON key is snake_case per report convention.
+        let json = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(report)) as? [String: Any]
+        #expect(json?["single_consensus"] != nil)
+        // Legacy report without the key decodes to nil (absence = unchecked,
+        // never a fabricated verdict).
+        let legacyReport = ConsensusReport(estimate: estimate, engines: ["a", "b", "c"],
+                                           skipped: [:])
+        let legacy = try JSONDecoder().decode(ConsensusReport.self,
+                                              from: JSONEncoder().encode(legacyReport))
+        #expect(legacy.singleConsensus == nil)
+    }
+
+    @Test func eigenRefusedRunProducesRefusedReport() async throws {
+        // Execute-level partition: two blocks of identical texts with
+        // disjoint vocabulary and unequal line counts (no LCS anchor, no
+        // equal-gap positional pair across blocks). Within-block co-answers
+        // pass the #38 gate; the single-consensus check must refuse.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let blockOne = "alpha river\nbeta stone\ngamma cloud\ndelta forest"
+        let blockTwo = "omega nine lanterns\nsigma quiet harbor\ntau winter map\n"
+            + "rho copper bell\npi garden wall\nphi paper crane\nchi violet ink"
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: blockOne),
+            StubEngine(id: "B", availability: .available, text: blockOne),
+            StubEngine(id: "C", availability: .available, text: blockTwo),
+            StubEngine(id: "D", availability: .available, text: blockTwo),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B", "C", "D"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        #expect(summary.refused)
+        #expect(summary.refusalReason?.lowercased().contains("single-consensus") == true)
+        let data = try Data(contentsOf: summary.outputReport)
+        let report = try JSONDecoder().decode(ConsensusReport.self, from: data)
+        #expect(report.refused)
+        #expect(report.overallCompetence == nil)
+        #expect(report.singleConsensus?.verdict == "failed")
+    }
+
+    @Test func untestableRunProceedsWithDisclosure() async throws {
+        // Two agreeing engines: the run must NOT be refused (nothing wrong
+        // with it), but the report must disclose the check was untestable.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello world"),
+            StubEngine(id: "B", availability: .available, text: "hello world"),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        #expect(summary.refused == false)
+        #expect(summary.singleConsensus?.verdict == "untestable")
+        let data = try Data(contentsOf: summary.outputReport)
+        let report = try JSONDecoder().decode(ConsensusReport.self, from: data)
+        #expect(report.singleConsensus?.verdict == "untestable")
+    }
 }
