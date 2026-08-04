@@ -80,10 +80,12 @@ def probe() -> None:
     cli = shutil.which("marker_single")
     if cli is None:
         print(json.dumps({"protocol": 1, "ok": False,
-                          "reason": "marker_single not on PATH"}))
+                          "reason": "marker_single not on PATH",
+                          "interpreter": sys.executable}))
         return
     print(json.dumps({"protocol": 1, "ok": True, "tool": "marker",
-                      "version": marker_version(cli)}))
+                      "version": marker_version(cli),
+                      "interpreter": sys.executable}))
 
 
 def marker_version(cli: str) -> str:
@@ -355,10 +357,12 @@ def probe() -> None:
         name, _ = pipeline_class()
         version = getattr(paddleocr, "__version__", "unknown")
         print(json.dumps({"protocol": 1, "ok": True, "tool": "paddleocr-pipeline",
-                          "version": f"{version} ({name})"}))
+                          "version": f"{version} ({name})",
+                          "interpreter": sys.executable}))
     except Exception as exc:  # noqa: BLE001 — probe reports, never raises
         print(json.dumps({"protocol": 1, "ok": False,
-                          "reason": f"{type(exc).__name__}: {exc}"}))
+                          "reason": f"{type(exc).__name__}: {exc}",
+                          "interpreter": sys.executable}))
 
 
 def page_size(image: str):

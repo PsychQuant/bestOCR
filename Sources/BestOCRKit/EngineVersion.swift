@@ -34,10 +34,20 @@ public struct EngineVersion: Sendable, Codable, Equatable {
     /// several entries when one engine stacks multiple versioned pieces.
     public let components: [String: String]
     public let resolution: VersionResolution
+    /// The interpreter that answered an adapter's version query (#37) —
+    /// provenance for `adapterReported` readings, NOT a versioned component
+    /// (it never enters `components` / `legacyToolVersion`; a path in the
+    /// evidence tool_version string would be a bogus component). nil =
+    /// unrecorded — older adapters simply lack the field. Traceable, not
+    /// verified: the adapter may still query a different interpreter than
+    /// the one that runs OCR (#36 honesty boundary).
+    public let interpreter: String?
 
-    public init(components: [String: String], resolution: VersionResolution) {
+    public init(components: [String: String], resolution: VersionResolution,
+                interpreter: String? = nil) {
         self.components = components
         self.resolution = resolution
+        self.interpreter = interpreter
     }
 
     /// The absence case, stated once so engines do not each spell it out.
@@ -45,8 +55,10 @@ public struct EngineVersion: Sendable, Codable, Equatable {
 
     /// Convenience for the common single-component case.
     public static func single(_ name: String, _ version: String,
-                              resolution: VersionResolution) -> EngineVersion {
-        EngineVersion(components: [name: version], resolution: resolution)
+                              resolution: VersionResolution,
+                              interpreter: String? = nil) -> EngineVersion {
+        EngineVersion(components: [name: version], resolution: resolution,
+                      interpreter: interpreter)
     }
 
     /// Flattened for the legacy `ConditionTuple.toolVersion` string field,

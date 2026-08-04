@@ -65,6 +65,9 @@ enum AdapterProtocolV1 {
         let tool: String?
         let version: String?
         let reason: String?
+        /// sys.executable of the interpreter that answered (#37); absent on
+        /// older adapters — absence decodes as nil (= unrecorded).
+        let interpreter: String?
     }
 
     /// Absence is a value, never an exception (spec §5.1/§8) — every failure
@@ -114,6 +117,7 @@ enum AdapterProtocolV1 {
               let version = reply.version, !version.isEmpty else {
             return .unavailable
         }
-        return .single(reply.tool ?? tool, version, resolution: .adapterReported)
+        return .single(reply.tool ?? tool, version, resolution: .adapterReported,
+                       interpreter: reply.interpreter)
     }
 }

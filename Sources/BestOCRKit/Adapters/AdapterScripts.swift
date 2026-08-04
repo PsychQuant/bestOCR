@@ -50,9 +50,11 @@ def probe() -> None:
     try:
         import rapidocr  # noqa: F401 — import check is the availability probe
         version = tool_version("rapidocr", "rapidocr") or "unknown"
-        print(json.dumps({"protocol": 1, "ok": True, "tool": "rapidocr", "version": version}))
+        print(json.dumps({"protocol": 1, "ok": True, "tool": "rapidocr", "version": version,
+                          "interpreter": sys.executable}))
     except Exception as exc:  # noqa: BLE001 — probe reports, never raises
-        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
+        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}",
+                          "interpreter": sys.executable}))
 
 
 def ocr(image: str, lang: str) -> None:
@@ -125,9 +127,11 @@ def probe() -> None:
         import cnocr  # noqa: F401
         from cnocr import CnOcr  # noqa: F401
         version = tool_version("cnocr", "cnocr") or "unknown"
-        print(json.dumps({"protocol": 1, "ok": True, "tool": "cnocr", "version": version}))
+        print(json.dumps({"protocol": 1, "ok": True, "tool": "cnocr", "version": version,
+                          "interpreter": sys.executable}))
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
+        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}",
+                          "interpreter": sys.executable}))
 
 
 def ocr(image: str, lang: str) -> None:
@@ -199,14 +203,17 @@ def probe() -> None:
         import surya  # noqa: F401
         if shutil.which("surya_ocr") is None:
             print(json.dumps({"protocol": 1, "ok": False,
-                              "reason": "surya importable but surya_ocr CLI not on PATH"}))
+                              "reason": "surya importable but surya_ocr CLI not on PATH",
+                              "interpreter": sys.executable}))
             return
         # dist name is surya-ocr; 0.17.x has no __version__ at all, so the old
         # getattr probe answered "unknown" while looking like it checked (#28).
         version = tool_version("surya-ocr", "surya") or "unknown"
-        print(json.dumps({"protocol": 1, "ok": True, "tool": "surya", "version": version}))
+        print(json.dumps({"protocol": 1, "ok": True, "tool": "surya", "version": version,
+                          "interpreter": sys.executable}))
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}))
+        print(json.dumps({"protocol": 1, "ok": False, "reason": f"{type(exc).__name__}: {exc}",
+                          "interpreter": sys.executable}))
 
 
 def collect_text(node) -> list:
