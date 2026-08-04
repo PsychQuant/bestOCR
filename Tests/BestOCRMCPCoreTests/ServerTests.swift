@@ -17,6 +17,8 @@ struct MCPStubEngine: OCREngine {
 
     func probe() async -> EngineAvailability { .available }
 
+    func resolveVersion() async -> EngineVersion { .unavailable }
+
     func recognize(_ request: OCRRequest) async throws -> OCRResult {
         let pages = request.pages.map {
             PageResult(page: $0.pageNumber, text: text, seconds: 0.01,
@@ -208,5 +210,45 @@ struct ServerTests {
         let direct = try await TriageProbe.runComplete(inputPath: img.path)
         #expect(viaMCP == direct)
         #expect(viaMCP.route == .ocrFull)   // image input: single no-text-layer page
+    }
+
+    // MARK: - #39: single-consensus check rendering
+
+    private func summaryFixture(check: SingleConsensusCheck?) -> ConsensusRunSummary {
+        ConsensusRunSummary(
+            outputMarkdown: URL(fileURLWithPath: "/tmp/x.consensus.md"),
+            outputReport: URL(fileURLWithPath: "/tmp/x.consensus.json"),
+            engines: ["a", "b", "c"], skipped: [:],
+            estimate: ConsensusEstimate(adjudicator: "ds-lite", items: [],
+                                        agreement: [:],
+                                        diagnostics: AdjudicatorDiagnostics()),
+            runID: "run-1", overwrote: false,
+            singleConsensus: check)
+    }
+
+    @Test func renderShowsPassedSingleConsensusWithRatio() {
+        let check = SingleConsensusCheck(
+            verdict: .passed(ratio: 5.23, loadings: ["a": 0.7, "b": 0.7, "c": 0.2]),
+            excluded: [])
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: check))
+        #expect(text.contains("single-consensus: passed — eigenvalue ratio 5.23"))
+    }
+
+    @Test func renderShowsUntestableVerdictAndExclusions() {
+        // untestable ≠ passed: the disclosure must be visible, with the
+        // excluded engines named (absence of evidence, disclosed).
+        let check = SingleConsensusCheck(
+            verdict: .untestable(reason: "only 2 engine(s) with co-answer data "
+                                     + "— the single-consensus check needs ≥ 3"),
+            excluded: ["tesseract"])
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: check))
+        #expect(text.contains("single-consensus: untestable — only 2 engine(s)"))
+        #expect(text.contains("excluded: tesseract"))
+    }
+
+    @Test func renderOmitsSingleConsensusWhenCheckAbsent() {
+        // majority / rover / legacy: no check ran — no line, never a verdict.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: nil))
+        #expect(!text.contains("single-consensus"))
     }
 }
