@@ -190,14 +190,20 @@ evidence/                  schema.md(先讀)、candidates.json、rows.jsonl(未�
   gate 擋未知 estimand;adapter-backed 缺 `tool_version` 軟警告;3×MAD 軟
   離群)。schema.md **canonical home 留本 repo**,bench 放帶 banner 的
   vendored copy;`recommend` v1 **不消費** bench rows。
-- 🔄 P14 triage 單一入口(2026-08-03,#35;openspec change
-  `triage-single-entry`,spec 進 `openspec/specs/`):測量式分診 —— per-page
-  文字層/碎片密度/divergence 三 task、三路徑(text_direct /
-  render_suspect_pages / ocr_full / mixed)、`triage` CLI+MCP、`ocr` skill
-  單一入口化、`triage.route_accuracy@v1` estimand(defined-unmeasured)。
-  spec §5.2 的 born-digital 重 OCR accepted cost 被推翻(§12 revisit)
+- ✅ P14 triage 單一入口(2026-08-03/04,#35,**v0.10.0 release**;openspec
+  change `triage-single-entry` archived,main specs 首版 = `triage` +
+  `ocr-single-entry`):測量式分診 —— per-page 文字層/碎片密度/divergence
+  三 task、三路徑(text_direct / render_suspect_pages / ocr_full / mixed)、
+  `triage` CLI+MCP、`ocr` skill 單一入口化、`triage.route_accuracy@v1`
+  estimand(defined-unmeasured)。spec §5.2 的 born-digital 重 OCR accepted
+  cost 被推翻(§12 revisit)。336→ 最終 tests 全綠;verify 抓到空頁選擇
+  trap(修為顯式 degraded)。sister:bench#1(estimand gate 同步,已 closed,
+  schema §3 增 triage thresholds 條款 `f6f1b24`)+ bench#2 self-test 套件
 - Backlog:assembly estimand 的標註參照子集(spec §12,**= bench corpus 的
-  第一個住民**,同一份工;triage 閾值校準同批標註)、MLX serving path(上游)
+  第一個住民**,同一份工;triage 閾值校準同批標註)、MLX serving path(上游)、
+  **triage evidence ingest**(estimand 有 rows 之前不動;屆時 `ConditionTuple`
+  需擴 `triage_text_min`/`triage_frag_max` 欄位以對齊 schema §3 `f6f1b24` —
+  bench validator 已 enforce,kit 端 ingest 不同步會產出被 bench 拒收的 rows)
 
 ## Cloud reference 備忘(M4)
 
