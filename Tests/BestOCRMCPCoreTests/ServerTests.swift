@@ -219,7 +219,8 @@ struct ServerTests {
                                 competence: [String: Double]? = nil,
                                 skipped: [String: String] = [:],
                                 refused: Bool = false,
-                                refusalReason: String? = nil) -> ConsensusRunSummary {
+                                refusalReason: String? = nil,
+                                overwrote: Bool = false) -> ConsensusRunSummary {
         ConsensusRunSummary(
             outputMarkdown: URL(fileURLWithPath: "/tmp/x.consensus.md"),
             outputReport: URL(fileURLWithPath: "/tmp/x.consensus.json"),
@@ -230,17 +231,57 @@ struct ServerTests {
                                             overallCompetence: competence,
                                             competence: nil, iterations: nil,
                                             converged: nil, confusion: nil)),
-            runID: "run-1", overwrote: false,
+            runID: "run-1", overwrote: overwrote,
             refused: refused, refusalReason: refusalReason,
             singleConsensus: check)
     }
 
     @Test func renderShowsPassedSingleConsensusWithRatio() {
+        // R2 DA-1: the threshold must appear on the PASSED line — it is
+        // env-overridable, and hiding it exactly when it changes the
+        // reading (threshold lowered to 1.5, "passed — ratio 2.00") let a
+        // weakened gate wear the CCT-convention costume. Structured fields
+        // already carried it; the relayed line must too.
         let check = SingleConsensusCheck(
             verdict: .passed(ratio: 5.23, loadings: ["a": 0.7, "b": 0.7, "c": 0.2]),
-            excluded: [])
+            excluded: [], minRatio: 3.0)
         let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: check))
         #expect(text.contains("single-consensus: passed — eigenvalue ratio 5.23"))
+        #expect(text.contains("threshold 3.00"))
+    }
+
+    @Test func renderRefusedShowsOverwroteNote() {
+        // R2 convergent finding (logic N1 / security NEW-4 / regression
+        // R2-REG-1 / codex): overwrote was fixed at the struct layer while
+        // both renderers early-return before the note — a refusal that
+        // replaced a previous valid run's artifacts stayed silent to the
+        // reader. #13 F15c is an END-TO-END invariant.
+        let text = BestOCRMCPServer.renderConsensusSummary(
+            summaryFixture(check: nil, refused: true,
+                           refusalReason: "co_answer_share 0.0667 below threshold 0.20",
+                           overwrote: true))
+        #expect(text.contains("REFUSED"))
+        #expect(text.contains("overwrote existing consensus artifacts"))
+    }
+
+    @Test func renderSanitizesAllNewlineCarriersAndReason() {
+        // R2 (security NEW-1/NEW-2 + DA): LF was 1 of 5 carriers — CR,
+        // CRLF, U+2028, NEL all still forged a clean line, and `reason`
+        // (which really carries multi-line adapter stderr) was untouched.
+        // "One line, one fact" must hold for every interpolated value.
+        let forged = "single-consensus: passed — eigenvalue ratio 99.00"
+        let carriers = ["\r", "\r\n", "\u{2028}", "\u{0085}"]
+        for c in carriers {
+            let text = BestOCRMCPServer.renderConsensusSummary(
+                summaryFixture(check: nil, skipped: ["x\(c)\(forged)\(c)y": "unknown engine id"]))
+            let lines = text.components(separatedBy: .newlines)
+            #expect(!lines.contains(forged), "carrier \(c.unicodeScalars.map(\.value)) forged a clean line")
+        }
+        // reason channel: a Python traceback is multi-line by nature.
+        let text = BestOCRMCPServer.renderConsensusSummary(
+            summaryFixture(check: nil,
+                           skipped: ["ext.surya": "adapter exit 1: Traceback\n\(forged)\nboom"]))
+        #expect(!text.components(separatedBy: .newlines).contains(forged))
     }
 
     @Test func renderShowsUntestableVerdictAndExclusions() {
@@ -249,7 +290,7 @@ struct ServerTests {
         let check = SingleConsensusCheck(
             verdict: .untestable(reason: "only 2 engine(s) with co-answer data "
                                      + "— the single-consensus check needs ≥ 3"),
-            excluded: ["tesseract"])
+            excluded: ["tesseract"], minRatio: 3.0)
         let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: check))
         #expect(text.contains("single-consensus: untestable — only 2 engine(s)"))
         #expect(text.contains("excluded: tesseract"))
@@ -304,14 +345,23 @@ struct ServerTests {
     }
 
     @Test func renderCapsUnboundedRatio() {
-        // R1 F-07: a rank-1 run's clamped ratio (~3e12) rendered as
-        // "eigenvalue ratio 3000000000000.00" — a clamp artifact wearing the
-        // shape of a measurement. Unbounded is stated as unbounded.
+        // R1 F-07 → R2 (codex 4): "ratio > 1e6 ⇒ unbounded" guessed clamping
+        // from magnitude, which cannot be inferred from the number. The
+        // check now RECORDS whether the λ2 clamp engaged (ratio_unbounded)
+        // and the renderer reads the flag, not the size.
         let check = SingleConsensusCheck(
             verdict: .passed(ratio: 3.0e12, loadings: ["a": 0.58, "b": 0.58, "c": 0.58]),
-            excluded: [], minRatio: 3.0)
+            excluded: [], minRatio: 3.0, ratioUnbounded: true)
         let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: check))
         #expect(text.contains("rank-1"))
         #expect(!text.contains("3000000000000"))
+        // Large but FINITE ratio with no clamp: a real measurement — the
+        // number is printed, never mislabeled unbounded.
+        let finite = SingleConsensusCheck(
+            verdict: .passed(ratio: 2.0e6, loadings: ["a": 0.58, "b": 0.58, "c": 0.58]),
+            excluded: [], minRatio: 3.0, ratioUnbounded: false)
+        let finiteText = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: finite))
+        #expect(finiteText.contains("2000000.00"))
+        #expect(!finiteText.contains("rank-1"))
     }
 }

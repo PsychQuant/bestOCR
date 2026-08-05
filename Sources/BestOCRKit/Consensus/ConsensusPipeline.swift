@@ -208,11 +208,24 @@ public enum ConsensusPipeline {
         let result = ConsensusValidity.singleConsensusCheck(
             agreement: agreement, engines: engines, minRatio: minRatio)
         let check = SingleConsensusCheck(verdict: result.verdict, excluded: result.excluded,
-                                         minRatio: minRatio)
+                                         minRatio: minRatio,
+                                         ratioUnbounded: result.ratioUnbounded)
         if case .failed(let reason, _) = result.verdict {
             return (reason, check)
         }
         return (nil, check)
+    }
+
+    /// "One line, one fact": collapse every newline carrier (LF, CR, CRLF,
+    /// NEL, U+2028/2029) so no interpolated value can write its own output
+    /// line. Renderers apply this to every user- or subprocess-influenced
+    /// string (skipped ids, adapter stderr reasons, artifact paths) — an
+    /// embedded newline in any of them could forge an authoritative-looking
+    /// line such as `single-consensus: passed` (R1 security M1; R2 NEW-1/2).
+    /// NOTE: `.components(separatedBy: .newlines)` handles CRLF correctly —
+    /// `contains("\n")`-style checks do NOT (CRLF is one grapheme).
+    public static func oneLine(_ s: String) -> String {
+        s.components(separatedBy: .newlines).joined(separator: "⏎")
     }
 
     // MARK: - Outputs
@@ -310,7 +323,7 @@ public enum ConsensusPipeline {
             candidates.append(engine)
         }
         guard candidates.count >= 2 else {
-            let trail = skipped.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "; ")
+            let trail = skipped.map { oneLine("\($0.key): \($0.value)") }.sorted().joined(separator: "; ")
             throw OCREngineError(engine: "consensus",
                                  message: "needs ≥2 available engines, got \(candidates.count)"
                                      + (trail.isEmpty ? "" : " — \(trail)"))
@@ -337,7 +350,7 @@ public enum ConsensusPipeline {
             }
         }
         guard results.count >= 2 else {
-            let trail = skipped.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "; ")
+            let trail = skipped.map { oneLine("\($0.key): \($0.value)") }.sorted().joined(separator: "; ")
             throw OCREngineError(engine: "consensus",
                                  message: "fewer than 2 engines produced output — \(trail)")
         }

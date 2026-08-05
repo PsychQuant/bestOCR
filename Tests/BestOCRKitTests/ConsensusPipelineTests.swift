@@ -637,6 +637,13 @@ struct ConsensusPipelineTests {
         // disjoint vocabulary and unequal line counts (no LCS anchor, no
         // equal-gap positional pair across blocks). Within-block co-answers
         // pass the #38 gate; the single-consensus check must refuse.
+        //
+        // FIXTURE DEPENDENCY: this relies on the aligner keeping the two
+        // blocks un-co-answered. If alignment improves (#40 HTML cell-split
+        // and successors), this fixture may stop producing a partition and
+        // the test will fail as "not refused" — that is the FIXTURE
+        // expiring, not the gate breaking; the behavior pin lives in the
+        // unit-level partitionItemsRefuseWithRatioInReason.
         let (tmp, img, runLog) = try fixtureSetup()
         let blockOne = "alpha river\nbeta stone\ngamma cloud\ndelta forest"
         let blockTwo = "omega nine lanterns\nsigma quiet harbor\ntau winter map\n"
@@ -701,7 +708,23 @@ struct ConsensusPipelineTests {
                                              reason: "co_answer_share 0.067 below threshold 0.2")
         let json = try JSONSerialization.jsonObject(
             with: JSONEncoder().encode(report)) as? [String: Any]
+        // Guard the guard: optional-chaining flattens to Any?, so a failed
+        // cast would also read as nil — assert the dictionary exists first
+        // (R2 requirements N4).
+        #expect(json != nil)
         #expect(json?["single_consensus"] == nil)
+    }
+
+    @Test func checkDecodesWithoutMinRatioOrUnboundedKeys() throws {
+        // v1 → v2 migration pin (R2 regression R2-REG-7): a report written
+        // before min_ratio / ratio_unbounded existed must decode with nil
+        // for both — never throw, never fabricate.
+        let legacy = #"{"verdict":"passed","ratio":5.2,"excluded_engines":[]}"#
+        let check = try JSONDecoder().decode(SingleConsensusCheck.self,
+                                             from: Data(legacy.utf8))
+        #expect(check.minRatio == nil)
+        #expect(check.ratioUnbounded == nil)
+        #expect(check.ratio == 5.2)
     }
 
     @Test func untestableRunProceedsWithDisclosure() async throws {

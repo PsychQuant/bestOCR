@@ -44,12 +44,15 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
   是「完全斷開」的 partition；跨群仍有零星一致（弱耦合分割）時兩條件都可能
   放行 —— `passed` 不是「絕無多群結構」的證明，不可如此轉述。
 - **untestable ≠ passed ≠ not checked（#39）**：`single-consensus: untestable`
-  （co-answer 引擎 < 3）表示檢定**無法進行**，run 照常產出但前提未經驗證 ——
-  轉述時不可省略這行、不可說成「檢定通過」。`single-consensus: not checked`
-  表示該 adjudicator（rover）**有 competence 宣稱但檢定尚未涵蓋它**（#49）——
-  轉述 rover 的 competence 排名時必須帶上這個未檢定聲明。完全沒有
-  single-consensus 行只發生在無 competence 宣稱的 adjudicator（majority ——
-  無前提可違反）。
+  表示檢定**無法進行**（成因有三：co-answer 引擎 < 3、agreement 矩陣含非有限值、
+  或 eigen 未收斂 —— **以訊息點名的原因為準**，不可一律說成引擎數不足），run
+  照常產出但前提未經驗證 —— 轉述時不可省略這行、不可說成「檢定通過」。
+  `single-consensus: not checked` 表示該 adjudicator（rover）**有 competence
+  宣稱但檢定尚未涵蓋它**（#49）—— 轉述 rover 的 competence 排名時必須帶上這個
+  未檢定聲明。**非 refusal 的正常輸出中**，完全沒有 single-consensus 行表示該
+  adjudicator 無 competence 宣稱（majority —— 無前提可違反）；`REFUSED` 輸出
+  本身不含此行（refusal 原因見 REFUSED 行）。passed 行附有當次生效的
+  threshold —— 轉述時一併帶上（env 可覆寫，門檻非恆為 3）。
 - **共識 ≠ 真值**：全體引擎同錯（同一難字大家都錯）時共識也錯。報告的
   `agreement` 矩陣是引擎間錯誤相關的診斷（相關性高會虛增 competence），
   MVP 只揭露不修正。

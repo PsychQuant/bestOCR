@@ -28,11 +28,12 @@ import Foundation
 ///   conditions are complementary ONLY for exact partitions (cross-block
 ///   agreement exactly 0): agreement values are ratios k/n, so a nonzero
 ///   cross-block value is at least 1/n ≫ the zero-loading epsilon, and a
-///   weakly-coupled minority block then evades BOTH conditions (#39 verify
-///   R1, F-06/M2 — numeric counterexample on the motivating run's
-///   neighborhood). Known limitation of the check as specified; a
-///   relative-loading detector is tracked in #48. A `passed` verdict is
-///   NOT proof that no substructure exists.
+///   weakly-coupled minority block then evades BOTH conditions.
+///   Reproducible construction (R2-verified): four engines mutually
+///   agreeing at 0.9 plus one outsider coupled at 0.05 passes with
+///   ratio ≈ 48 and minimum loading ≈ 0.007. Known limitation of the
+///   check as specified; a relative-loading detector is tracked in #48.
+///   A `passed` verdict is NOT proof that no substructure exists.
 /// - Eigen decomposition is a hand-written cyclic Jacobi: convergent for
 ///   symmetric matrices and fully unit-testable against analytic spectra.
 ///   The 100-sweep cap is a truncation, so the result carries a `converged`
@@ -86,17 +87,26 @@ public enum ConsensusValidity {
     /// items" per #38). Exclusions are disclosed. Fewer than 3 included
     /// engines → `untestable` (two raters cannot distinguish one culture
     /// from two).
+    /// `ratioUnbounded` in the result records whether the λ2 clamp engaged
+    /// (λ2 ≤ 1e-12 — rank-1-like agreement): the ratio value is then a clamp
+    /// artifact, not a measurement, and consumers must read the flag, never
+    /// infer clamping from the number's magnitude (R2 — codex 4 / NEW-8).
+    ///
+    /// Precondition: the sparse dictionary is expected in `agreementMatrix`
+    /// shape — bidirectionally populated and non-negative. Values are
+    /// symmetrized defensively, but the included/excluded split reads each
+    /// engine's own row; a caller populating pairs one-way under-includes.
     public static func singleConsensusCheck(
         agreement: [String: [String: Double]],
         engines: [String],
         minRatio: Double
-    ) -> (verdict: Verdict, excluded: [String]) {
+    ) -> (verdict: Verdict, excluded: [String], ratioUnbounded: Bool) {
         let included = engines.filter { !(agreement[$0] ?? [:]).isEmpty }.sorted()
         let excluded = engines.filter { (agreement[$0] ?? [:]).isEmpty }.sorted()
         guard included.count >= 3 else {
             return (.untestable(reason: "only \(included.count) engine(s) with "
                         + "co-answer data — the single-consensus check needs ≥ 3"),
-                    excluded)
+                    excluded, false)
         }
         let dense = denseAgreement(from: agreement, engines: included)
         guard dense.allSatisfy({ row in row.allSatisfy(\.isFinite) }) else {
@@ -105,19 +115,23 @@ public enum ConsensusValidity {
             // structure" (or as non-convergence: NaN poisons the off-norm
             // comparison too) sends debugging the wrong way (R1 security L1).
             // Checked BEFORE the eigen so the diagnosis names the real cause.
+            // NOTE the verdict is fail-closed but the RUN proceeds — an
+            // untestable check discloses, it does not refuse (same contract
+            // as the <3-engines branch; R2 security NEW-5).
             return (.untestable(reason: "non-finite values in the agreement "
                         + "matrix — upstream computation corrupt; cannot test"),
-                    excluded)
+                    excluded, false)
         }
         let eigen = jacobiEigen(dense)
         guard eigen.converged else {
             // Theoretically unreachable at these sizes (Jacobi converges in a
             // handful of sweeps for n ≤ ~200), but an unconverged eigensystem
-            // must never silently produce a verdict — fail-closed as
-            // "could not test", with the real cause named (R1 codex C2).
+            // must never silently produce a verdict. Verdict-level
+            // fail-closed; the run proceeds with disclosure (R1 codex C2,
+            // R2 security NEW-5).
             return (.untestable(reason: "eigen decomposition did not converge "
                         + "within the sweep cap — cannot certify a verdict"),
-                    excluded)
+                    excluded, false)
         }
         let lambda1 = eigen.values[0]
         guard lambda1 > 1e-9 else {
@@ -128,8 +142,9 @@ public enum ConsensusValidity {
                         + "(λ1 ≈ 0, below numerical threshold 1e-9); there is "
                         + "no shared answer key to estimate",
                             ratio: nil),
-                    excluded)
+                    excluded, false)
         }
+        let ratioUnbounded = eigen.values[1] <= 1e-12
         let ratio = lambda1 / max(eigen.values[1], 1e-12)
         var lead = eigen.vectors[0]
         if let maxIdx = lead.indices.max(by: { abs(lead[$0]) < abs(lead[$1]) }),
@@ -139,31 +154,47 @@ public enum ConsensusValidity {
         var loadings: [String: Double] = [:]
         for (i, id) in included.enumerated() { loadings[id] = lead[i] }
         guard ratio >= minRatio else {
-            // Ratio at %.4f vs threshold at %.2f: enough digits that a
-            // boundary case (2.9999 vs 3) cannot render as the
-            // self-contradictory "3.00 < threshold 3.0" (R1 codex C1);
-            // full precision lives in the structured fields.
+            // Both numbers at %.4f (R1 prescribed UNIFIED precision — R2 DA
+            // §3.2 caught the %.2f threshold). This narrows the
+            // contradiction window (e.g. ratio 2.99999 rendering as
+            // "3.0000 < threshold 3.0000") to ~5e-5; it does NOT eliminate
+            // it — full precision lives in the structured fields, which are
+            // canonical.
             return (.failed(reason: String(
                         format: "single-consensus check failed: eigenvalue ratio "
-                            + "λ1/λ2 = %.4f < threshold %.2f — the agreement structure "
+                            + "λ1/λ2 = %.4f < threshold %.4f — the agreement structure "
                             + "is consistent with more than one answer key, so "
                             + "the pooled single-key estimate is not defined for "
                             + "this run",
                         ratio, minRatio),
                             ratio: ratio),
-                    excluded)
+                    excluded, ratioUnbounded)
+        }
+        // Negative loadings cannot arise from valid (non-negative) input —
+        // reaching here means the caller violated the precondition; name
+        // that, don't call it a zero loading (R2 security NEW-9).
+        let negatives = included.filter { (loadings[$0] ?? 0) < -1e-9 }
+        guard negatives.isEmpty else {
+            return (.failed(reason: "single-consensus check failed: engine(s) "
+                        + negatives.joined(separator: ", ")
+                        + " have negative first-factor loading — the input "
+                        + "violates the non-negativity precondition",
+                            ratio: ratio),
+                    excluded, ratioUnbounded)
         }
         let outsiders = included.filter { (loadings[$0] ?? 0) <= 1e-9 }
         guard outsiders.isEmpty else {
+            let ratioText = ratioUnbounded
+                ? "unbounded — λ2 ≈ 0" : String(format: "%.4f", ratio)
             return (.failed(reason: "single-consensus check failed: engine(s) "
                         + outsiders.joined(separator: ", ")
                         + " have zero first-factor loading — they sit outside the "
                         + "leading consensus block (eigenvalue ratio "
-                        + String(format: "%.4f", ratio) + ")",
+                        + ratioText + ")",
                             ratio: ratio),
-                    excluded)
+                    excluded, ratioUnbounded)
         }
-        return (.passed(ratio: ratio, loadings: loadings), excluded)
+        return (.passed(ratio: ratio, loadings: loadings), excluded, ratioUnbounded)
     }
 
     // MARK: - Internals
@@ -264,7 +295,13 @@ public struct SingleConsensusCheck: Codable, Equatable, Sendable {
     public let ratio: Double?
     /// The threshold that was in force (env-overridable, so a verdict is
     /// unreadable without it — condition-tuple discipline, R1 F-04).
+    /// Optional ONLY for legacy decode; new checks always carry it (the
+    /// initializer requires it — R2 codex 6).
     public let minRatio: Double?
+    /// True when the λ2 clamp engaged (rank-1-like agreement): `ratio` is
+    /// then a clamp artifact, not a measurement. Read this flag — never
+    /// infer clamping from the ratio's magnitude (R2). nil = legacy report.
+    public let ratioUnbounded: Bool?
     /// First-factor loadings per included engine (passed only).
     public let loadings: [String: Double]?
     /// Engines excluded for having no co-answer data at all — absence of
@@ -276,13 +313,15 @@ public struct SingleConsensusCheck: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case verdict, ratio, loadings, reason
         case minRatio = "min_ratio"
+        case ratioUnbounded = "ratio_unbounded"
         case excludedEngines = "excluded_engines"
     }
 
     public init(verdict: ConsensusValidity.Verdict, excluded: [String],
-                minRatio: Double? = nil) {
+                minRatio: Double?, ratioUnbounded: Bool? = nil) {
         self.excludedEngines = excluded
         self.minRatio = minRatio
+        self.ratioUnbounded = ratioUnbounded
         switch verdict {
         case .passed(let ratio, let loadings):
             self.verdict = "passed"

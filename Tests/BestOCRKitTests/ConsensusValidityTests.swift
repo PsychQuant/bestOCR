@@ -244,6 +244,10 @@ struct ConsensusValidityTests {
         }
         #expect(ratio.isFinite)
         #expect(ratio >= 3)
+        // The λ2 clamp engaged — the result must SAY so, because the ratio
+        // number is a clamp artifact and downstream must not average it
+        // into anything (R2).
+        #expect(check.ratioUnbounded)
     }
 
     @Test func excludedEngineDisclosed() {
