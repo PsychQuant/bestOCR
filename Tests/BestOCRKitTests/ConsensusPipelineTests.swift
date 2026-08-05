@@ -536,17 +536,21 @@ struct ConsensusPipelineTests {
         return items
     }
 
-    @Test func estimatesCompetenceClassifiesAdjudicators() {
-        // Pooling-with-competence family — the check applies to all of them.
-        #expect(AdjudicatorRegistry.estimatesCompetence("ds-lite"))
-        #expect(AdjudicatorRegistry.estimatesCompetence("ds-full"))
-        #expect(AdjudicatorRegistry.estimatesCompetence("prior-weighted"))
-        #expect(AdjudicatorRegistry.estimatesCompetence("irt"))
+    @Test func poolsRatersClassifiesAdjudicators() {
+        // The criterion is the issue's own wording — "every adjudicator that
+        // POOLS RATERS" under a single answer key — not "estimates
+        // competence" (R1 renamed it: prior-weighted pools but reports no
+        // per-engine competence, so the old name mislabeled the criterion).
+        #expect(AdjudicatorRegistry.poolsRaters("ds-lite"))
+        #expect(AdjudicatorRegistry.poolsRaters("ds-full"))
+        #expect(AdjudicatorRegistry.poolsRaters("prior-weighted"))
+        #expect(AdjudicatorRegistry.poolsRaters("irt"))
         // majority claims no competence model (no assumption to violate);
-        // rover adjudicates a confusion network, not pooled items.
-        #expect(!AdjudicatorRegistry.estimatesCompetence("majority"))
-        #expect(!AdjudicatorRegistry.estimatesCompetence("rover"))
-        #expect(!AdjudicatorRegistry.estimatesCompetence("no-such-adjudicator"))
+        // rover's confusion-network alignment is outside this check's reach
+        // today — a KNOWN gap (#49), not a claim that rover lacks competence.
+        #expect(!AdjudicatorRegistry.poolsRaters("majority"))
+        #expect(!AdjudicatorRegistry.poolsRaters("rover"))
+        #expect(!AdjudicatorRegistry.poolsRaters("no-such-adjudicator"))
     }
 
     @Test func partitionItemsRefuseWithRatioInReason() {
@@ -555,6 +559,10 @@ struct ConsensusPipelineTests {
             adjudicatorID: "ds-lite")
         #expect(gate.refusalReason?.lowercased().contains("eigenvalue ratio") == true)
         #expect(gate.check?.verdict == "failed")
+        // R1 F-04/F-05: a failed check must carry its numbers structurally —
+        // the measured ratio AND the threshold that was in force.
+        #expect(gate.check?.ratio != nil)
+        #expect(gate.check?.minRatio == ConsensusValidity.minEigenRatio())
     }
 
     @Test func majorityGateSkipsEigenCheck() {
@@ -651,6 +659,49 @@ struct ConsensusPipelineTests {
         #expect(report.refused)
         #expect(report.overallCompetence == nil)
         #expect(report.singleConsensus?.verdict == "failed")
+    }
+
+    @Test func refusedRunReportsOverwrote() async throws {
+        // R1 security M2: refusedRun unconditionally replaces
+        // <stem>.consensus.* but hard-coded `overwrote: false` — a previous
+        // VALID run's artifacts silently became two lines of refusal while
+        // the tool claimed nothing was overwritten (#13 F15c violation).
+        let (tmp, img, runLog) = try fixtureSetup()
+        let outDir = tmp.appendingPathComponent("out")
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let stem = img.deletingPathExtension().lastPathComponent
+        try "previous valid transcript".write(
+            to: outDir.appendingPathComponent("\(stem).consensus.md"),
+            atomically: true, encoding: .utf8)
+        let blockOne = "alpha river\nbeta stone\ngamma cloud\ndelta forest"
+        let blockTwo = "omega nine lanterns\nsigma quiet harbor\ntau winter map\n"
+            + "rho copper bell\npi garden wall\nphi paper crane\nchi violet ink"
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: blockOne),
+            StubEngine(id: "B", availability: .available, text: blockOne),
+            StubEngine(id: "C", availability: .available, text: blockTwo),
+            StubEngine(id: "D", availability: .available, text: blockTwo),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B", "C", "D"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: outDir, registry: registry, runLog: runLog)
+        #expect(summary.refused)
+        #expect(summary.overwrote)   // the pre-existing artifact WAS replaced
+    }
+
+    @Test func coAnswerRefusedReportOmitsSingleConsensusKey() throws {
+        // Pin (R1 regression L2): when the check did not run (co-answer
+        // refusal → nil), the JSON must not even carry the key — today this
+        // is guaranteed only by synthesized encodeIfPresent; this test makes
+        // that language-level accident an explicit contract.
+        let report = ConsensusReport.refused(items: soloHeavyItems(),
+                                             engines: ["doc.marker", "vision", "ext.surya"],
+                                             skipped: [:], adjudicator: "ds-lite",
+                                             reason: "co_answer_share 0.067 below threshold 0.2")
+        let json = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(report)) as? [String: Any]
+        #expect(json?["single_consensus"] == nil)
     }
 
     @Test func untestableRunProceedsWithDisclosure() async throws {

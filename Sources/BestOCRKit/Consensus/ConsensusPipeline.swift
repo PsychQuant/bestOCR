@@ -200,15 +200,16 @@ public enum ConsensusPipeline {
     public static func singleConsensusGate(
         items: [AlignedItem], engines: [String], adjudicatorID: String
     ) -> (refusalReason: String?, check: SingleConsensusCheck?) {
-        guard AdjudicatorRegistry.estimatesCompetence(adjudicatorID) else {
+        guard AdjudicatorRegistry.poolsRaters(adjudicatorID) else {
             return (nil, nil)
         }
         let agreement = ConsensusEstimator.agreementMatrix(items: items, engines: engines)
+        let minRatio = ConsensusValidity.minEigenRatio()
         let result = ConsensusValidity.singleConsensusCheck(
-            agreement: agreement, engines: engines,
-            minRatio: ConsensusValidity.minEigenRatio())
-        let check = SingleConsensusCheck(verdict: result.verdict, excluded: result.excluded)
-        if case .failed(let reason) = result.verdict {
+            agreement: agreement, engines: engines, minRatio: minRatio)
+        let check = SingleConsensusCheck(verdict: result.verdict, excluded: result.excluded,
+                                         minRatio: minRatio)
+        if case .failed(let reason, _) = result.verdict {
             return (reason, check)
         }
         return (nil, check)
@@ -341,6 +342,16 @@ public enum ConsensusPipeline {
                                  message: "fewer than 2 engines produced output — \(trail)")
         }
 
+        // Overwrite is surfaced, never silent (#13 F15c) — measured BEFORE
+        // any writer runs, because the refusal paths replace the same two
+        // artifacts and must report it honestly too, not just the success
+        // path (R1 security M2: a previous valid run's transcript silently
+        // became two lines of refusal while the tool claimed otherwise).
+        let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
+        let overwrote = ["md", "json"].contains { ext in
+            FileManager.default.fileExists(
+                atPath: outDir.appendingPathComponent("\(stem).consensus.\(ext)").path)
+        }
         let estimate: ConsensusEstimate
         var singleConsensus: SingleConsensusCheck?
         if AdjudicatorRegistry.isSequenceAdjudicator(adjudicatorID) {
@@ -370,7 +381,8 @@ public enum ConsensusPipeline {
                 return try refusedRun(reason: reason, check: nil, items: items,
                                       engines: results.keys.sorted(),
                                       skipped: skipped, adjudicatorID: adjudicatorID,
-                                      inputPath: inputPath, outDir: outDir)
+                                      inputPath: inputPath, outDir: outDir,
+                                      overwrote: overwrote)
             }
             // #39 single-consensus gate (see `singleConsensusGate` doc for
             // the ordering contract): failed → refuse with the check
@@ -383,7 +395,8 @@ public enum ConsensusPipeline {
                 return try refusedRun(reason: reason, check: gate.check, items: items,
                                       engines: results.keys.sorted(),
                                       skipped: skipped, adjudicatorID: adjudicatorID,
-                                      inputPath: inputPath, outDir: outDir)
+                                      inputPath: inputPath, outDir: outDir,
+                                      overwrote: overwrote)
             }
             estimate = adjudicator.adjudicate(items: items)
         }
@@ -398,14 +411,6 @@ public enum ConsensusPipeline {
                                      + results.keys.sorted().joined(separator: ", ")
                                      + " — engines produced disjoint or empty extractions;"
                                      + " nothing to adjudicate")
-        }
-        // Overwrite is surfaced, never silent (#13 F15c) — replacing EITHER
-        // artifact counts (a leftover report with no markdown is still an
-        // overwrite).
-        let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
-        let overwrote = ["md", "json"].contains { ext in
-            FileManager.default.fileExists(
-                atPath: outDir.appendingPathComponent("\(stem).consensus.\(ext)").path)
         }
         let outputs = try writeOutputs(estimate: estimate,
                                        engines: results.keys.sorted(),
@@ -445,7 +450,8 @@ public enum ConsensusPipeline {
     private static func refusedRun(reason: String, check: SingleConsensusCheck?,
                                    items: [AlignedItem], engines: [String],
                                    skipped: [String: String], adjudicatorID: String,
-                                   inputPath: String, outDir: URL)
+                                   inputPath: String, outDir: URL,
+                                   overwrote: Bool)
         throws -> ConsensusRunSummary {
         let report = ConsensusReport.refused(items: items, engines: engines,
                                              skipped: skipped,
@@ -470,7 +476,7 @@ public enum ConsensusPipeline {
             estimate: ConsensusEstimate(adjudicator: adjudicatorID, items: [],
                                         agreement: report.agreement,
                                         diagnostics: AdjudicatorDiagnostics()),
-            runID: "", overwrote: false,
+            runID: "", overwrote: overwrote,
             refused: true, refusalReason: reason,
             singleConsensus: check)
     }

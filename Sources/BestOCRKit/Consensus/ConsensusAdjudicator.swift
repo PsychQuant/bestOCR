@@ -188,12 +188,18 @@ public enum AdjudicatorRegistry {
         make(id) != nil || makeSequence(id) != nil
     }
 
-    /// #39: does this adjudicator pool raters into a per-engine competence
-    /// model? Only those carry the CCT single-key assumption the
-    /// single-consensus check guards. `majority` claims no competence model
-    /// (no assumption to violate — issue Non-Goal); `rover` adjudicates a
-    /// confusion network, a different model with its own alignment semantics.
-    public static func estimatesCompetence(_ id: String) -> Bool {
+    /// #39: does this adjudicator POOL RATERS under a single latent answer
+    /// key? That — the issue's own criterion — is what the single-consensus
+    /// check guards, NOT "estimates competence": `prior-weighted` pools but
+    /// deliberately reports no per-engine competence, and it still carries
+    /// the single-key assumption (the old name mislabeled it — R1 rename).
+    /// `majority` claims no competence model (no assumption to violate —
+    /// issue Non-Goal). `rover` DOES report competence but its
+    /// confusion-network alignment is outside the check's current wiring —
+    /// a KNOWN gap, disclosed at the render layer and tracked in #49;
+    /// adding it here alone would be a no-op (the sequence branch never
+    /// calls the gate).
+    public static func poolsRaters(_ id: String) -> Bool {
         [DawidSkeneLiteAdjudicator.id,
          FullDawidSkeneAdjudicator.id,
          PriorWeightedAdjudicator.id,

@@ -13,17 +13,34 @@ import Foundation
 /// quantity that does not exist for the run (#39).
 ///
 /// Implementation notes, in decreasing order of surprise:
-/// - The agreement matrix is non-negative, so by Perron-Frobenius the leading
-///   eigenvector can be oriented non-negative — negative loadings cannot
-///   occur here. The operative form of CCT's "all loadings positive" is
-///   therefore "no ZERO loadings": a block partition puts the leading
+/// - The agreement matrix is non-negative. The "no negative loadings"
+///   guarantee is NOT Perron-Frobenius alone — PF only promises a
+///   non-negative leading eigenvector EXISTS; with a degenerate λ1 the
+///   returned basis vector could mix signs. What actually carries the
+///   guarantee is the BRANCH ORDER: the loadings check runs only after
+///   `ratio >= minRatio` with `minRatio > 1`, which forces λ1 to be simple,
+///   and then the global sign normalization suffices. Do not move the
+///   loadings check ahead of the ratio check — the argument silently
+///   dies and no test catches it (#39 verify R1, logic L1).
+/// - The operative form of CCT's "all loadings positive" is therefore
+///   "no ZERO loadings": an exact block partition puts the leading
 ///   eigenvector entirely on one block and zeros on the other. The two
-///   conditions are complementary — equal-size blocks are caught by the
-///   ratio (λ1 ≈ λ2), unequal ones by the zero loadings.
-/// - Eigen decomposition is a hand-written cyclic Jacobi: unconditionally
-///   convergent for symmetric matrices and fully unit-testable against
-///   analytic spectra. Power iteration was rejected because it fails to
-///   converge precisely when λ1 ≈ λ2 — the regime this check must measure.
+///   conditions are complementary ONLY for exact partitions (cross-block
+///   agreement exactly 0): agreement values are ratios k/n, so a nonzero
+///   cross-block value is at least 1/n ≫ the zero-loading epsilon, and a
+///   weakly-coupled minority block then evades BOTH conditions (#39 verify
+///   R1, F-06/M2 — numeric counterexample on the motivating run's
+///   neighborhood). Known limitation of the check as specified; a
+///   relative-loading detector is tracked in #48. A `passed` verdict is
+///   NOT proof that no substructure exists.
+/// - Eigen decomposition is a hand-written cyclic Jacobi: convergent for
+///   symmetric matrices and fully unit-testable against analytic spectra.
+///   The 100-sweep cap is a truncation, so the result carries a `converged`
+///   flag and the check refuses to issue a verdict on an unconverged
+///   eigensystem (untestable — R1 codex C2). Power iteration was rejected
+///   because it fails to converge precisely when λ1 ≈ λ2 — the regime this
+///   check must measure. Cost is O(sweeps·n³): measured ~1s at n = 100,
+///   ~12s at n = 200 (M5 Max); the shipped surface caps engines at ≲ 10.
 /// - The minimum-residual diagonal treatment is the standard ONE-STEP
 ///   communality approximation (diagonal ← row max |off-diagonal|), not the
 ///   iterated fit — the gate needs the ratio's position relative to the
@@ -36,15 +53,20 @@ public enum ConsensusValidity {
     /// Outcome of the single-consensus check. `untestable` is disclosed to
     /// the caller and is NOT a pass — "could not test the assumption" and
     /// "tested and held" must never render the same.
+    ///
+    /// `failed` carries the measured ratio when the eigen ran (nil only on
+    /// the λ1 ≈ 0 branch, where no ratio exists) — the number is most
+    /// valuable exactly when the check refuses (R1 F-05).
     public enum Verdict: Equatable {
         case passed(ratio: Double, loadings: [String: Double])
-        case failed(reason: String)
+        case failed(reason: String, ratio: Double?)
         case untestable(reason: String)
     }
 
     /// λ1/λ2 refusal threshold. A value ≤ 1 is meaningless (λ1 ≥ λ2 always),
     /// so like #38's `minCoAnswerThreshold` any unusable override falls back
-    /// to the default rather than silently disabling the gate.
+    /// to the default rather than silently disabling the gate. `isFinite` is
+    /// load-bearing: "inf" would pass `v > 1` and refuse every run.
     public static func minEigenRatio(
         env: [String: String] = ProcessInfo.processInfo.environment
     ) -> Double {
@@ -77,12 +99,35 @@ public enum ConsensusValidity {
                     excluded)
         }
         let dense = denseAgreement(from: agreement, engines: included)
+        guard dense.allSatisfy({ row in row.allSatisfy(\.isFinite) }) else {
+            // Non-finite values mean the upstream matrix is corrupt, not that
+            // engines disagree — misattributing this as "no agreement
+            // structure" (or as non-convergence: NaN poisons the off-norm
+            // comparison too) sends debugging the wrong way (R1 security L1).
+            // Checked BEFORE the eigen so the diagnosis names the real cause.
+            return (.untestable(reason: "non-finite values in the agreement "
+                        + "matrix — upstream computation corrupt; cannot test"),
+                    excluded)
+        }
         let eigen = jacobiEigen(dense)
+        guard eigen.converged else {
+            // Theoretically unreachable at these sizes (Jacobi converges in a
+            // handful of sweeps for n ≤ ~200), but an unconverged eigensystem
+            // must never silently produce a verdict — fail-closed as
+            // "could not test", with the real cause named (R1 codex C2).
+            return (.untestable(reason: "eigen decomposition did not converge "
+                        + "within the sweep cap — cannot certify a verdict"),
+                    excluded)
+        }
         let lambda1 = eigen.values[0]
         guard lambda1 > 1e-9 else {
+            // Numerical-zero judgement, not exact zero (λ1 = 5e-10 lands
+            // here too); no ratio exists on this branch (0/0 undefined).
             return (.failed(reason: "single-consensus check failed: no agreement "
-                        + "structure — engines co-answer but never agree (λ1 = 0); "
-                        + "there is no shared answer key to estimate"),
+                        + "structure — engines co-answer but never agree "
+                        + "(λ1 ≈ 0, below numerical threshold 1e-9); there is "
+                        + "no shared answer key to estimate",
+                            ratio: nil),
                     excluded)
         }
         let ratio = lambda1 / max(eigen.values[1], 1e-12)
@@ -94,12 +139,18 @@ public enum ConsensusValidity {
         var loadings: [String: Double] = [:]
         for (i, id) in included.enumerated() { loadings[id] = lead[i] }
         guard ratio >= minRatio else {
+            // Ratio at %.4f vs threshold at %.2f: enough digits that a
+            // boundary case (2.9999 vs 3) cannot render as the
+            // self-contradictory "3.00 < threshold 3.0" (R1 codex C1);
+            // full precision lives in the structured fields.
             return (.failed(reason: String(
                         format: "single-consensus check failed: eigenvalue ratio "
-                            + "λ1/λ2 = %.2f < threshold %.1f — the agreement structure "
+                            + "λ1/λ2 = %.4f < threshold %.2f — the agreement structure "
                             + "is consistent with more than one answer key, so "
-                            + "per-engine competence is not defined for this run",
-                        ratio, minRatio)),
+                            + "the pooled single-key estimate is not defined for "
+                            + "this run",
+                        ratio, minRatio),
+                            ratio: ratio),
                     excluded)
         }
         let outsiders = included.filter { (loadings[$0] ?? 0) <= 1e-9 }
@@ -108,7 +159,8 @@ public enum ConsensusValidity {
                         + outsiders.joined(separator: ", ")
                         + " have zero first-factor loading — they sit outside the "
                         + "leading consensus block (eigenvalue ratio "
-                        + String(format: "%.2f", ratio) + ")"),
+                        + String(format: "%.4f", ratio) + ")",
+                            ratio: ratio),
                     excluded)
         }
         return (.passed(ratio: ratio, loadings: loadings), excluded)
@@ -117,15 +169,21 @@ public enum ConsensusValidity {
     // MARK: - Internals
 
     /// Densify the sparse agreement dictionary over `engines` (row/column
-    /// order): missing pair → 0. Diagonal ← row max |off-diagonal| (one-step
-    /// minres communality approximation; see type doc).
+    /// order): missing pair → 0, and the two directions are AVERAGED —
+    /// `agreementMatrix` is symmetric by construction, so this is a no-op
+    /// for every internal caller, but `jacobiEigen` is symmetric-only and a
+    /// future asymmetric caller would otherwise get silent non-eigenvalues
+    /// (R1 security M3). Diagonal ← row max |off-diagonal| (one-step minres
+    /// communality approximation; see type doc).
     static func denseAgreement(from sparse: [String: [String: Double]],
                                engines: [String]) -> [[Double]] {
         let n = engines.count
         var m = Array(repeating: Array(repeating: 0.0, count: n), count: n)
         for i in 0..<n {
             for j in 0..<n where i != j {
-                m[i][j] = sparse[engines[i]]?[engines[j]] ?? 0
+                let ab = sparse[engines[i]]?[engines[j]] ?? 0
+                let ba = sparse[engines[j]]?[engines[i]] ?? 0
+                m[i][j] = (ab + ba) / 2
             }
         }
         for i in 0..<n {
@@ -138,19 +196,25 @@ public enum ConsensusValidity {
 
     /// Cyclic Jacobi eigen decomposition for a small symmetric matrix.
     /// Returns eigenvalues in descending order with matching eigenvectors
-    /// (each `vectors[k]` is the unit eigenvector for `values[k]`).
+    /// (each `vectors[k]` is the unit eigenvector for `values[k]`) and a
+    /// convergence flag (off-diagonal norm under tolerance when the sweep
+    /// loop ended — the cap is a truncation, so this must be checked).
     static func jacobiEigen(_ matrix: [[Double]])
-        -> (values: [Double], vectors: [[Double]]) {
+        -> (values: [Double], vectors: [[Double]], converged: Bool) {
         let n = matrix.count
         var a = matrix
         // Columns of v accumulate the eigenvectors.
         var v = (0..<n).map { i in (0..<n).map { j in i == j ? 1.0 : 0.0 } }
-        for _ in 0..<100 {
-            var offSquared = 0.0
+        let tolerance = 1e-24   // squared off-diagonal Frobenius norm
+        func offSquared() -> Double {
+            var s = 0.0
             for i in 0..<n {
-                for j in (i + 1)..<n { offSquared += a[i][j] * a[i][j] }
+                for j in (i + 1)..<n { s += a[i][j] * a[i][j] }
             }
-            if offSquared < 1e-24 { break }
+            return s
+        }
+        for _ in 0..<100 {
+            if offSquared() < tolerance { break }
             for p in 0..<n {
                 for q in (p + 1)..<n {
                     let apq = a[p][q]
@@ -180,9 +244,11 @@ public enum ConsensusValidity {
                 }
             }
         }
+        let converged = offSquared() < tolerance
         let order = (0..<n).sorted { a[$0][$0] > a[$1][$1] }
         return (order.map { a[$0][$0] },
-                order.map { col in (0..<n).map { v[$0][col] } })
+                order.map { col in (0..<n).map { v[$0][col] } },
+                converged)
     }
 }
 
@@ -192,10 +258,13 @@ public enum ConsensusValidity {
 public struct SingleConsensusCheck: Codable, Equatable, Sendable {
     /// "passed" / "failed" / "untestable".
     public let verdict: String
-    /// λ1/λ2 — present on passed. A failed check carries its ratio inside
-    /// `reason` (issue contract: "a refusal with the eigenvalue ratio in
-    /// the message is enough").
+    /// λ1/λ2 — present whenever the eigen ran (passed AND failed; nil on
+    /// the λ1 ≈ 0 branch and on untestable). Full precision — the message
+    /// string is the human rendering, this is the canonical number.
     public let ratio: Double?
+    /// The threshold that was in force (env-overridable, so a verdict is
+    /// unreadable without it — condition-tuple discipline, R1 F-04).
+    public let minRatio: Double?
     /// First-factor loadings per included engine (passed only).
     public let loadings: [String: Double]?
     /// Engines excluded for having no co-answer data at all — absence of
@@ -206,20 +275,23 @@ public struct SingleConsensusCheck: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case verdict, ratio, loadings, reason
+        case minRatio = "min_ratio"
         case excludedEngines = "excluded_engines"
     }
 
-    public init(verdict: ConsensusValidity.Verdict, excluded: [String]) {
+    public init(verdict: ConsensusValidity.Verdict, excluded: [String],
+                minRatio: Double? = nil) {
         self.excludedEngines = excluded
+        self.minRatio = minRatio
         switch verdict {
         case .passed(let ratio, let loadings):
             self.verdict = "passed"
             self.ratio = ratio
             self.loadings = loadings
             self.reason = nil
-        case .failed(let reason):
+        case .failed(let reason, let ratio):
             self.verdict = "failed"
-            self.ratio = nil
+            self.ratio = ratio
             self.loadings = nil
             self.reason = reason
         case .untestable(let reason):

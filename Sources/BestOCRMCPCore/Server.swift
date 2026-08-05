@@ -466,7 +466,7 @@ public actor BestOCRMCPServer {
         }
         let languages = (args["lang"]?.stringValue ?? "")
             .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let dpi = args["dpi"]?.doubleValue ?? 150
         let pageSpec = args["pages"]?.stringValue ?? ""
@@ -560,11 +560,11 @@ public actor BestOCRMCPServer {
         let docType = args["doc_type"]?.stringValue ?? "unspecified"
         let languages = (args["lang"]?.stringValue ?? "")
             .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let engineIDs = (args["engines"]?.stringValue ?? "")
             .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
         // Unknown ids fail loud inside the pipeline rather than defaulting —
@@ -607,13 +607,23 @@ public actor BestOCRMCPServer {
         var lines: [String] = []
         lines.append("engines: \(summary.engines.joined(separator: ", "))")
         for (id, reason) in summary.skipped.sorted(by: { $0.key < $1.key }) {
-            lines.append("skipped: \(id) — \(reason)")
+            // One line, one fact: a skipped id is the only user-influenced
+            // string here — never let it write its own line (R1 security M1:
+            // an embedded newline could forge a `single-consensus: passed`).
+            let safeID = id.replacingOccurrences(of: "\n", with: "⏎")
+            lines.append("skipped: \(safeID) — \(reason)")
         }
         // #38: a refusal is a measurement outcome — say it first and plainly.
         if summary.refused {
             lines.append("REFUSED: \(summary.refusalReason ?? "co-answer share below threshold")")
             lines.append("No competence was estimated — the report carries the alignment")
             lines.append("diagnostics (response-count distribution, agreement matrix).")
+            // R1 F-10: on refusal the reader most needs to know which engines
+            // the check ran WITHOUT — that lived only in the JSON.
+            if let check = summary.singleConsensus, !check.excludedEngines.isEmpty {
+                lines.append("excluded: \(check.excludedEngines.joined(separator: ", "))"
+                             + " — no co-answer data (not part of the refused check)")
+            }
             lines.append("transcript: \(summary.outputMarkdown.path)")
             lines.append("report: \(summary.outputReport.path)")
             return lines.joined(separator: "\n")
@@ -621,14 +631,20 @@ public actor BestOCRMCPServer {
         let est = summary.estimate
         lines.append("adjudicator: \(est.adjudicator)")
         // #39: the single-consensus check — competence below is only
-        // meaningful if this held. untestable ≠ passed; both are disclosed,
-        // and no line at all means the check did not run (majority, rover).
+        // meaningful if this held. untestable ≠ passed; both are disclosed.
+        // No line at all is RESERVED for "no competence claimed" (majority);
+        // an unchecked competence claim (rover) must say it is unchecked.
         if let check = summary.singleConsensus {
             var line: String
             switch check.verdict {
             case "passed":
-                line = "single-consensus: passed — eigenvalue ratio "
-                    + (check.ratio.map { String(format: "%.2f", $0) } ?? "n/a")
+                // A clamped rank-1 ratio (~1e12) is a clamp artifact, not a
+                // measurement — unbounded is stated as unbounded (R1 F-07).
+                let ratioText = check.ratio.map { r in
+                    r > 1e6 ? "unbounded (λ2 ≈ 0 — rank-1 agreement)"
+                            : String(format: "%.2f", r)
+                } ?? "n/a"
+                line = "single-consensus: passed — eigenvalue ratio " + ratioText
             default:
                 line = "single-consensus: \(check.verdict) — \(check.reason ?? "unspecified")"
             }
@@ -637,6 +653,14 @@ public actor BestOCRMCPServer {
                     + " — no co-answer data)"
             }
             lines.append(line)
+        } else if est.diagnostics.overallCompetence != nil {
+            // R1 B2: rover reports competence but its confusion-network
+            // alignment sits outside this check (#49) — the ranking below
+            // carries an UNTESTED single-key assumption, and silence here
+            // would read as "nothing claimed".
+            lines.append("single-consensus: not checked — \(est.adjudicator) reports "
+                         + "competence but its alignment model is outside this check "
+                         + "(#49); the single-key assumption is untested")
         }
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
         // solo = single-engine items the aligner never grouped — NOT disputes (#38).
@@ -682,7 +706,7 @@ public actor BestOCRMCPServer {
         let docType = args["doc_type"]?.stringValue ?? "unspecified"
         let languages = (args["lang"]?.stringValue ?? "")
             .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         var effectiveRegistry = registry
         if let modelOverride = args["model"]?.stringValue {
@@ -779,7 +803,7 @@ public actor BestOCRMCPServer {
         }
         let languages = (args["lang"]?.stringValue ?? "")
             .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let documentClassRaw = args["document_class"]?.stringValue ?? "unspecified"
         guard let documentClass = DocumentClass.parse(documentClassRaw) else {

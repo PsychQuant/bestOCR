@@ -38,12 +38,18 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
   引擎讀同一份 latent answer key；single-consensus 檢定（eigenvalue ratio ≥ 3
   預設，`BESTOCR_CONSENSUS_MIN_EIGEN_RATIO` 覆寫 + 首因子零 loading 偵測）
   失敗時輸出 `REFUSED` —— 這表示該 run 的 competence **這個量本身不存在**
-  （兩群引擎各答各的 key），不是引擎品質差。refusal 訊息含 ratio，必須原樣
-  轉述。閾值 3 是 CCT 文獻慣例值、非本 corpus 校準。
-- **untestable ≠ passed（#39）**：`single-consensus: untestable`（co-answer
-  引擎 < 3）表示檢定**無法進行**，run 照常產出但前提未經驗證 —— 轉述時不可
-  省略這行、不可說成「檢定通過」。沒有 single-consensus 行則表示檢定不適用
-  （majority／rover 無 competence 宣稱）。
+  （兩群引擎各答各的 key），不是引擎品質差。refusal 訊息含 ratio（例外：
+  λ1 ≈ 0 的退化分支無 ratio 可引，訊息以 λ1 ≈ 0 表示），必須原樣轉述。
+  閾值 3 是 CCT 文獻慣例值、非本 corpus 校準。**已知限制（#48）**：檢定抓的
+  是「完全斷開」的 partition；跨群仍有零星一致（弱耦合分割）時兩條件都可能
+  放行 —— `passed` 不是「絕無多群結構」的證明，不可如此轉述。
+- **untestable ≠ passed ≠ not checked（#39）**：`single-consensus: untestable`
+  （co-answer 引擎 < 3）表示檢定**無法進行**，run 照常產出但前提未經驗證 ——
+  轉述時不可省略這行、不可說成「檢定通過」。`single-consensus: not checked`
+  表示該 adjudicator（rover）**有 competence 宣稱但檢定尚未涵蓋它**（#49）——
+  轉述 rover 的 competence 排名時必須帶上這個未檢定聲明。完全沒有
+  single-consensus 行只發生在無 competence 宣稱的 adjudicator（majority ——
+  無前提可違反）。
 - **共識 ≠ 真值**：全體引擎同錯（同一難字大家都錯）時共識也錯。報告的
   `agreement` 矩陣是引擎間錯誤相關的診斷（相關性高會虛增 competence），
   MVP 只揭露不修正。

@@ -78,15 +78,115 @@ struct ConsensusValidityTests {
     @Test func partitionFixtureFails() {
         // Two equal blocks → λ1 ≈ λ2 → ratio ≈ 1 < 3. The refusal reason
         // must carry the measured ratio (issue Expected: "a refusal with the
-        // eigenvalue ratio in the message is enough").
+        // eigenvalue ratio in the message is enough") — AND the structured
+        // ratio must be populated too (R1 F-05: the number is most valuable
+        // exactly when the check refuses; a null field forces regex parsing).
         let check = ConsensusValidity.singleConsensusCheck(
             agreement: partitioned(), engines: ["a", "b", "c", "d"], minRatio: 3)
-        guard case .failed(let reason) = check.verdict else {
+        guard case .failed(let reason, let ratio) = check.verdict else {
             Issue.record("expected failed, got \(check.verdict)")
             return
         }
         #expect(reason.contains("1.0"))
         #expect(reason.lowercased().contains("eigenvalue ratio"))
+        #expect(ratio != nil)
+        #expect(abs((ratio ?? 0) - 1.0) < 0.01)
+    }
+
+    @Test func issueObservedMatrixIsRefused() {
+        // The #39 motivating run, verbatim: exactly the pairwise entries the
+        // issue's Actual section shows (symmetric completion; unshown pairs
+        // have NO entry). tesseract's row is all zeros — present entries with
+        // value 0 (co-answered, never agreed), so it is INCLUDED, not
+        // excluded. numpy cross-check: ratio 1.5748 < 3 → failed on the
+        // ratio condition; tesseract loading is exactly 0 (second line of
+        // defense agrees). This is the issue's only empirical evidence —
+        // pinned so it can never silently start passing.
+        var m: [String: [String: Double]] = [:]
+        func put(_ a: String, _ b: String, _ v: Double) {
+            m[a, default: [:]][b] = v
+            m[b, default: [:]][a] = v
+        }
+        put("tesseract", "doc.marker", 0.0)
+        put("tesseract", "ext.rapidocr", 0.0)
+        put("tesseract", "ext.surya", 0.0)
+        put("tesseract", "vision", 0.0)
+        put("doc.marker", "ext.surya", 0.0)
+        put("doc.marker", "vision", 0.5)
+        put("ext.surya", "ext.rapidocr", 0.54)
+        put("ext.surya", "ext.cnocr", 0.36)
+        put("ext.surya", "vision", 0.47)
+        let engines = ["doc.marker", "ext.cnocr", "ext.rapidocr",
+                       "ext.surya", "tesseract", "vision"]
+        let check = ConsensusValidity.singleConsensusCheck(
+            agreement: m, engines: engines, minRatio: 3)
+        guard case .failed(let reason, let ratio) = check.verdict else {
+            Issue.record("expected failed, got \(check.verdict)")
+            return
+        }
+        #expect(reason.contains("1.57"))
+        #expect(abs((ratio ?? 0) - 1.5748) < 0.001)
+        #expect(check.excluded.isEmpty)   // all six co-answered someone
+    }
+
+    @Test func nonFiniteAgreementIsUntestableNotMisattributed() {
+        // R1 security L1: NaN input was fail-closed (good) but the message
+        // blamed "engines never agree" — wrong attribution sends debugging
+        // the wrong way. Non-finite values are an upstream-corruption signal:
+        // untestable, with the real cause named.
+        let m: [String: [String: Double]] = [
+            "a": ["b": Double.nan, "c": 0.5],
+            "b": ["a": Double.nan, "c": 0.5],
+            "c": ["a": 0.5, "b": 0.5],
+        ]
+        let check = ConsensusValidity.singleConsensusCheck(
+            agreement: m, engines: ["a", "b", "c"], minRatio: 3)
+        guard case .untestable(let reason) = check.verdict else {
+            Issue.record("expected untestable, got \(check.verdict)")
+            return
+        }
+        #expect(reason.lowercased().contains("non-finite"))
+    }
+
+    @Test func asymmetricInputIsSymmetrized() {
+        // R1 security M3: jacobiEigen assumes symmetry; an asymmetric dict
+        // (impossible from agreementMatrix today, possible from a future
+        // caller) silently produced non-eigenvalues. denseAgreement now
+        // symmetrizes: m[i][j] = m[j][i] = (a_ij + a_ji) / 2.
+        let m: [String: [String: Double]] = ["a": ["b": 1.0], "b": ["a": 0.0]]
+        let dense = ConsensusValidity.denseAgreement(from: m, engines: ["a", "b"])
+        #expect(dense[0][1] == dense[1][0])
+        #expect(abs(dense[0][1] - 0.5) < 1e-12)
+    }
+
+    @Test func jacobiReportsConvergence() {
+        // R1 codex C2: 100 sweeps is a truncation — "unconditionally
+        // convergent" is a property of the untruncated algorithm. The result
+        // now carries a convergence flag; real inputs at n ≤ ~200 converge
+        // in a handful of sweeps, and the check refuses to issue a verdict
+        // (untestable) if the flag ever comes back false.
+        let a: [[Double]] = [[4, 1, 0.5, 0.2],
+                             [1, 3, 0.3, 0.1],
+                             [0.5, 0.3, 2, 0.4],
+                             [0.2, 0.1, 0.4, 1]]
+        #expect(ConsensusValidity.jacobiEigen(a).converged)
+        #expect(ConsensusValidity.jacobiEigen([[2, 1], [1, 2]]).converged)
+    }
+
+    @Test func checkRecordsMinRatioForReplay() {
+        // R1 F-04: the threshold is env-overridable, so a report saying
+        // "passed, ratio 3.4" is unreadable without the threshold that was
+        // in force. Same condition-tuple discipline as evidence rows.
+        let passed = SingleConsensusCheck(
+            verdict: .passed(ratio: 5.0, loadings: ["a": 0.7, "b": 0.7, "c": 0.1]),
+            excluded: [], minRatio: 3.0)
+        #expect(passed.minRatio == 3.0)
+        let failed = SingleConsensusCheck(
+            verdict: .failed(reason: "eigenvalue ratio λ1/λ2 = 1.5748 < threshold 3.00",
+                             ratio: 1.5748),
+            excluded: [], minRatio: 3.0)
+        #expect(failed.ratio == 1.5748)
+        #expect(failed.minRatio == 3.0)
     }
 
     @Test func zeroLoadingEngineFails() {
@@ -99,12 +199,13 @@ struct ConsensusValidityTests {
         ]
         let check = ConsensusValidity.singleConsensusCheck(
             agreement: m, engines: ["a", "b", "c"], minRatio: 3)
-        guard case .failed(let reason) = check.verdict else {
+        guard case .failed(let reason, let ratio) = check.verdict else {
             Issue.record("expected failed, got \(check.verdict)")
             return
         }
         #expect(reason.contains("engine(s) c"))
         #expect(reason.lowercased().contains("loading"))
+        #expect(ratio != nil)   // the eigen ran — the number exists, record it
     }
 
     @Test func noAgreementStructureFails() {
@@ -117,11 +218,15 @@ struct ConsensusValidityTests {
         ]
         let check = ConsensusValidity.singleConsensusCheck(
             agreement: m, engines: ["a", "b", "c"], minRatio: 3)
-        guard case .failed(let reason) = check.verdict else {
+        guard case .failed(let reason, let ratio) = check.verdict else {
             Issue.record("expected failed, got \(check.verdict)")
             return
         }
         #expect(reason.lowercased().contains("no agreement structure"))
+        // λ1 ≤ ε is a numerical-zero judgement, not exact zero (R1 codex C3);
+        // no ratio exists on this branch (0/0 undefined) — nil, honestly.
+        #expect(reason.contains("≈ 0"))
+        #expect(ratio == nil)
     }
 
     @Test func rank1PerfectAgreementPasses() {
@@ -187,5 +292,16 @@ struct ConsensusValidityTests {
             env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": "0.5"]) == 3.0)
         #expect(ConsensusValidity.minEigenRatio(
             env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": "5.5"]) == 5.5)
+        // Non-finite pins (R1 security L3): the isFinite guard is
+        // load-bearing — "inf" would pass `v > 1` and make `ratio >= inf`
+        // refuse every run. These lines make deleting the guard turn red.
+        #expect(ConsensusValidity.minEigenRatio(
+            env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": "inf"]) == 3.0)
+        #expect(ConsensusValidity.minEigenRatio(
+            env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": "nan"]) == 3.0)
+        #expect(ConsensusValidity.minEigenRatio(
+            env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": "1e400"]) == 3.0)
+        #expect(ConsensusValidity.minEigenRatio(
+            env: ["BESTOCR_CONSENSUS_MIN_EIGEN_RATIO": ""]) == 3.0)
     }
 }
