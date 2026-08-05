@@ -122,6 +122,18 @@ public enum ConsensusValidity {
                         + "matrix — upstream computation corrupt; cannot test"),
                     excluded, false)
         }
+        guard dense.allSatisfy({ row in row.allSatisfy { $0 >= 0 } }) else {
+            // Non-negativity is the check's own precondition (the whole PF
+            // argument rests on it) — validated at the boundary like
+            // finiteness, so a violating input is named as such instead of
+            // receiving a verdict about data the check cannot judge
+            // (R3: the old post-hoc negative-loading branch sat after the
+            // ratio guard and lost the race to "more than one answer key").
+            return (.untestable(reason: "negative values in the agreement "
+                        + "matrix — the input violates the non-negativity "
+                        + "precondition; cannot test"),
+                    excluded, false)
+        }
         let eigen = jacobiEigen(dense)
         guard eigen.converged else {
             // Theoretically unreachable at these sizes (Jacobi converges in a
@@ -170,18 +182,11 @@ public enum ConsensusValidity {
                             ratio: ratio),
                     excluded, ratioUnbounded)
         }
-        // Negative loadings cannot arise from valid (non-negative) input —
-        // reaching here means the caller violated the precondition; name
-        // that, don't call it a zero loading (R2 security NEW-9).
-        let negatives = included.filter { (loadings[$0] ?? 0) < -1e-9 }
-        guard negatives.isEmpty else {
-            return (.failed(reason: "single-consensus check failed: engine(s) "
-                        + negatives.joined(separator: ", ")
-                        + " have negative first-factor loading — the input "
-                        + "violates the non-negativity precondition",
-                            ratio: ratio),
-                    excluded, ratioUnbounded)
-        }
+        // No negative-loading branch here: non-negativity is validated at
+        // the boundary above, and with a non-negative matrix + simple λ1
+        // (guaranteed by the ratio guard) the oriented leading vector has
+        // no materially negative components — numerical noise (~1e-13)
+        // falls under the zero-loading epsilon below, conservatively.
         let outsiders = included.filter { (loadings[$0] ?? 0) <= 1e-9 }
         guard outsiders.isEmpty else {
             let ratioText = ratioUnbounded
@@ -317,8 +322,12 @@ public struct SingleConsensusCheck: Codable, Equatable, Sendable {
         case excludedEngines = "excluded_engines"
     }
 
+    /// Non-optional parameters enforce the invariant the stored optionals
+    /// cannot: every NEWLY built check carries its threshold and its clamp
+    /// disclosure (R3 codex 2). The stored properties stay optional solely
+    /// so legacy JSON (written before these keys existed) decodes to nil.
     public init(verdict: ConsensusValidity.Verdict, excluded: [String],
-                minRatio: Double?, ratioUnbounded: Bool? = nil) {
+                minRatio: Double, ratioUnbounded: Bool = false) {
         self.excludedEngines = excluded
         self.minRatio = minRatio
         self.ratioUnbounded = ratioUnbounded

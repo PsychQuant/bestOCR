@@ -217,15 +217,18 @@ public enum ConsensusPipeline {
     }
 
     /// "One line, one fact": collapse every newline carrier (LF, CR, CRLF,
-    /// NEL, U+2028/2029) so no interpolated value can write its own output
-    /// line. Renderers apply this to every user- or subprocess-influenced
-    /// string (skipped ids, adapter stderr reasons, artifact paths) — an
-    /// embedded newline in any of them could forge an authoritative-looking
-    /// line such as `single-consensus: passed` (R1 security M1; R2 NEW-1/2).
-    /// NOTE: `.components(separatedBy: .newlines)` handles CRLF correctly —
-    /// `contains("\n")`-style checks do NOT (CRLF is one grapheme).
+    /// NEL, FF, U+2028/2029) so no interpolated value can write its own
+    /// output line. Renderers apply this to every user- or subprocess-
+    /// influenced string (skipped ids, adapter stderr reasons, artifact
+    /// paths) — an embedded newline in any of them could forge an
+    /// authoritative-looking line such as `single-consensus: passed`
+    /// (R1 security M1; R2 NEW-1/2).
+    /// Iterates by `Character` so CRLF — ONE grapheme in Swift — becomes
+    /// ONE ⏎ (R3: `components(separatedBy: .newlines)` split it into two
+    /// separators, contradicting the one-carrier contract; CharacterSet
+    /// membership is scalar-wise, `Character.isNewline` is grapheme-wise).
     public static func oneLine(_ s: String) -> String {
-        s.components(separatedBy: .newlines).joined(separator: "⏎")
+        String(s.map { $0.isNewline ? "⏎" : $0 })
     }
 
     // MARK: - Outputs

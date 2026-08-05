@@ -698,8 +698,8 @@ public actor BestOCRMCPServer {
         } else {
             lines.append("competence: n/a — \(est.adjudicator) has no competence model")
         }
-        lines.append("transcript: \(summary.outputMarkdown.path)")
-        lines.append("report: \(summary.outputReport.path)")
+        lines.append("transcript: \(ConsensusPipeline.oneLine(summary.outputMarkdown.path))")
+        lines.append("report: \(ConsensusPipeline.oneLine(summary.outputReport.path))")
         lines.append("run-id: \(summary.runID) (promote with the evidence ingest gate)")
         if summary.overwrote {
             lines.append("note: overwrote existing consensus artifacts for this stem/out-dir")

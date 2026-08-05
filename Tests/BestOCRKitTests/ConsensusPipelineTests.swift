@@ -715,6 +715,22 @@ struct ConsensusPipelineTests {
         #expect(json?["single_consensus"] == nil)
     }
 
+    @Test func oneLineCollapsesEveryNewlineCarrierExactly() {
+        // R3 (codex): components(separatedBy: .newlines) split CRLF into TWO
+        // separators ("a⏎⏎b") — safe but contrary to the one-carrier
+        // contract the comment claimed. Character.isNewline treats CRLF as
+        // the single grapheme it is. Exact-output assertions, not
+        // "no forged line" — the weaker form missed this.
+        #expect(ConsensusPipeline.oneLine("a\r\nb") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("a\n\nb") == "a⏎⏎b")
+        #expect(ConsensusPipeline.oneLine("a\nb") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("a\rb") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("a\u{0085}b") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("a\u{2028}b") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("a\u{2029}b") == "a⏎b")
+        #expect(ConsensusPipeline.oneLine("plain") == "plain")
+    }
+
     @Test func checkDecodesWithoutMinRatioOrUnboundedKeys() throws {
         // v1 → v2 migration pin (R2 regression R2-REG-7): a report written
         // before min_ratio / ratio_unbounded existed must decode with nil

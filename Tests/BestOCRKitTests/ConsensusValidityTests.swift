@@ -148,6 +148,26 @@ struct ConsensusValidityTests {
         #expect(reason.lowercased().contains("non-finite"))
     }
 
+    @Test func negativeInputIsUntestableBeforeAnyVerdict() {
+        // R3 (codex 4): the post-hoc negative-loading branch sat AFTER the
+        // ratio guard, so a negative-valued (precondition-violating) input
+        // with a low ratio reported "more than one answer key" — a verdict
+        // about data the check had no business judging. Non-negativity is
+        // now validated at the boundary, before the eigen, like finiteness.
+        let m: [String: [String: Double]] = [
+            "a": ["b": -0.5, "c": 0.5],
+            "b": ["a": -0.5, "c": 0.5],
+            "c": ["a": 0.5, "b": 0.5],
+        ]
+        let check = ConsensusValidity.singleConsensusCheck(
+            agreement: m, engines: ["a", "b", "c"], minRatio: 3)
+        guard case .untestable(let reason) = check.verdict else {
+            Issue.record("expected untestable, got \(check.verdict)")
+            return
+        }
+        #expect(reason.lowercased().contains("non-negativity"))
+    }
+
     @Test func asymmetricInputIsSymmetrized() {
         // R1 security M3: jacobiEigen assumes symmetry; an asymmetric dict
         // (impossible from agreementMatrix today, possible from a future
