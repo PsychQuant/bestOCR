@@ -191,7 +191,15 @@ measure the same thing. Consensus quantities are estimand-qualified per
 adjudicator (`consensus.<id>.<quantity>@v1`), so two models' numbers can never
 be cross-ranked. The default path: consensus transcript (`<stem>.consensus.md`, ⚠
 marks low-consensus items) + per-engine per-kind competence and a
-low-consensus review list (`<stem>.consensus.json`). Consensus is not ground
+low-consensus review list (`<stem>.consensus.json`). Two validity gates run
+before any pooling estimator and can refuse the run outright (`REFUSED` +
+full alignment diagnostics, no competence, exit 0 — a refusal is a
+measurement outcome, not a tool error): a co-answer gate
+(`BESTOCR_CONSENSUS_MIN_COANSWER`, default 0.2) and a CCT single-consensus
+check (eigenvalue ratio vs `BESTOCR_CONSENSUS_MIN_EIGEN_RATIO`, default 3,
+plus zero-loading detection — a partitioned run's "competence" would be an
+estimate of a quantity that does not exist). Both thresholds are literature
+conventions, not corpus-calibrated. Consensus is not ground
 truth — the report's `agreement` matrix surfaces inter-engine error
 correlation as a diagnostic, and the "-lite" estimator has no confusion
 matrix (no directional error discrimination). Local engines only; runs get

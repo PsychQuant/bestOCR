@@ -83,7 +83,10 @@ Sources/BestOCRKit/        引擎層(protocol、Registry、RunLog、RunPipeline)
                            (async divergence wiring)。閾值 env:
                            `BESTOCR_TRIAGE_TEXT_MIN` / `BESTOCR_TRIAGE_FRAG_MAX`
                            (evidence-pending,單樣本歸納)
-  Consensus/               ItemExtractor / ConsensusAlignment / Pipeline /
+  Consensus/               ItemExtractor / ConsensusAlignment / Pipeline
+                           (#38 co-answer gate → #39 single-consensus gate
+                           → estimator;兩閾值 env 可覆寫、evidence-pending)/
+                           ConsensusValidity(CCT eigen 檢定 + oneLine;#39)/
                            ConsensusAdjudicator(protocol + registry)/ 六個
                            adjudicator(ds-lite/majority/ds-full/
                            prior-weighted/irt/rover;#17)
