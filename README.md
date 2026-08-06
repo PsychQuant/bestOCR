@@ -92,16 +92,30 @@ gh release create v<semver> .build/release/bestocr-mcp .build/release/bestocr \
 
 ## Architecture — where OCR capability actually lives
 
+**bestOCR is the single owner of general-purpose text recognition** (owner
+decision, 2026-08-07 — see #55 / macdoc#145). Engine selection, version
+recording, and the evidence conventions live here and only here. Document
+tools that need text recognition **delegate to bestOCR**; they do not carry
+their own OCR entry points.
+
 ```
-PsychQuant/ocr-swift          ← shared capability layer (published SPM package)
-        │                        MLX + Ollama backends, PDFKit extractor
-   ┌────┴─────────────┐
-   │                  │
-macdoc                bestOCR (this repo)
-PDF/document tools    ├── repos/measureOCR   ← instrument: factorial benchmark CLI
-(pdf-to-latex,        │                        + ANOVA harness (article 1 pins it)
- macdoc ocr, …)       ├── evidence/          ← local T2 rows with provenance labels
-                      └── mcp/ via bestocr-mcp (shipped)
+PsychQuant/ocr-swift          ← engine backends (published SPM package)
+        │                        MLX + Ollama, PDFKit extractor
+        │
+bestOCR (this repo)           ← sole owner of general-purpose OCR
+├── Sources/BestOCRKit        ← OCREngine protocol, engines, router pipeline
+├── repos/measureOCR          ← instrument: factorial benchmark CLI
+│                                + ANOVA harness (article 1 pins it)
+├── evidence/                 ← local T2 rows with provenance labels
+└── mcp/ via bestocr-mcp (shipped)
+        ▲
+        │ delegates (CLI today; library/MCP interface: #55)
+macdoc  ─┘                    ← document tools (pdf-to-latex, converters).
+                                 Its standalone `macdoc ocr` is a deprecation
+                                 shim as of macdoc#145; the pdf-to-latex
+                                 internal page-OCR step still uses ocr-swift
+                                 directly, pending the #55 delegation interface
+                                 (phase 2, macdoc#145).
 
 bestOCR-bench         ← public cross-machine evidence layer (#33): corpus,
 (sibling repo)          community measurements (tier T2-community), leaderboard,
@@ -109,9 +123,14 @@ bestOCR-bench         ← public cross-machine evidence layer (#33): corpus,
                         loop; recommend does NOT consume bench rows (v1).
 ```
 
-Both consumers pull `ocr-swift` from GitHub as a versioned package — moving
-measureOCR out of macdoc changed **zero** build dependencies. macdoc's PDF
-tools keep their OCR capability untouched.
+### Delegation interface (macdoc → bestOCR)
+
+Today the contract is the `bestocr` CLI (`ocr` / `recommend` / `consensus`),
+which records engine + version per run. Whether macdoc's pdf-to-latex
+internal page-OCR should call a library API, the CLI, or the MCP surface is
+the open design question of #55 — until that lands, its internal step keeps
+using `ocr-swift` directly and is explicitly out of scope of macdoc#145
+phase 1.
 
 ## Layout
 
