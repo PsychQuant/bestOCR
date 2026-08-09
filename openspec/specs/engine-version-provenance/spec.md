@@ -53,10 +53,18 @@ Version data SHALL consist of a mapping from component name to component version
 
 Version data SHALL NOT carry a separate "primary version" field. Which component is primary is a consumer-side judgement and SHALL NOT be fixed by the producer.
 
+Version data MAY additionally carry the interpreter that answered an adapter's version query (#37) as a separate provenance value. The interpreter SHALL NOT enter the component mapping or any string derived from it, and absence SHALL decode as unrecorded, never as an error. The interpreter is host-local provenance (an absolute local path) and SHALL NOT be serialized into shared or contributed artifacts without deliberate redaction.
+
 #### Scenario: A component version is obtained by probing
 
 - **WHEN** an engine obtains its version by executing a command at run time
 - **THEN** the resolution SHALL be recorded as probed
+
+#### Scenario: An adapter reports which interpreter answered the version query
+
+- **WHEN** an adapter probe reply carries the interpreter that produced it
+- **THEN** the version data SHALL carry that interpreter as separate provenance, outside the component mapping
+- **AND** a reply without the field SHALL decode with the interpreter unrecorded
 
 #### Scenario: A version comes from an adapter
 

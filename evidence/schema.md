@@ -77,6 +77,12 @@ ranking rule.** Ranking granularity stays per-model-key (as it already is across
 `dpi` and `quant`); whether differing tool versions should partition a ranking is
 a separate estimand-semantics decision that this field enables but does not make.
 
+`EngineVersion.interpreter` (#37) is **host-local provenance and is NOT a row
+field**: it is an absolute local path (typically carrying the OS username) and
+must never enter contributed rows or any shared artifact without deliberate
+redaction. If interpreter provenance is ever brought into evidence, that is a
+schema decision to be made here first — not a field to thread through quietly.
+
 `triage_text_min` / `triage_frag_max` (**required** for `triage.*` estimands;
 bestOCR-bench#1 DA-1): the *effective* thresholds — after `BESTOCR_TRIAGE_*` env
 overrides — that produced the routing verdicts being scored. `TriageReport`

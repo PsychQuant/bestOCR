@@ -91,7 +91,15 @@ def probe() -> None:
 def marker_version(cli: str) -> str:
     """Read the version from the venv's dist-info rather than importing marker
     (which the host's interpreter cannot do) or shelling out to --version
-    (which would load torch)."""
+    (which would load torch).
+
+    NOTE (#37): the probe reply's "interpreter" field is therefore the HOST
+    process (sys.executable) — the process that answered — while the version
+    it reports comes from marker's own uv-tool venv (the shebang-derived
+    interpreter below). This is unlike the other four adapters, whose
+    version IS read in-process. Do not overload "interpreter" with the venv
+    path — one field, one meaning; if the venv provenance is ever needed,
+    add a separate field."""
     try:
         with open(cli, encoding="utf-8") as handle:
             shebang = handle.readline().strip()

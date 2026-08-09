@@ -41,6 +41,19 @@ public struct EngineVersion: Sendable, Codable, Equatable {
     /// unrecorded — older adapters simply lack the field. Traceable, not
     /// verified: the adapter may still query a different interpreter than
     /// the one that runs OCR (#36 honesty boundary).
+    ///
+    /// HOST-LOCAL provenance: the value is an absolute local path (often
+    /// carrying the OS username) — it must never be serialized into shared
+    /// or contributed artifacts (evidence rows, bench submissions) without
+    /// deliberate redaction (#37 verify security F2). It participates in
+    /// synthesized `==`: two readings of the same tool version from
+    /// different interpreters are deliberately NOT equal — they are
+    /// different provenance (#37 verify R7).
+    ///
+    /// Per-adapter semantics caveat: `doc.marker` resolves its version from
+    /// a separate uv-tool venv (shebang-derived), so its `interpreter` is
+    /// the host probe process, not the install the version describes — see
+    /// the note in `DocumentAdapterScripts.marker`.
     public let interpreter: String?
 
     public init(components: [String: String], resolution: VersionResolution,

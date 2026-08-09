@@ -113,11 +113,18 @@ enum AdapterProtocolV1 {
               run.exitCode == 0,
               let data = lastJSONLine(run.stdout),
               let reply = try? JSONDecoder().decode(ProbeReply.self, from: data),
+              // Same protocol guard as probe() and recognize() — a reply
+              // from an unrecognized protocol version must not have its
+              // version or interpreter trusted either (#37 verify D4).
+              supportedProtocols.contains(reply.protocol),
               reply.ok,
               let version = reply.version, !version.isEmpty else {
             return .unavailable
         }
+        // sys.executable can be "" (frozen/embedded CPython) — nil is the
+        // documented "unrecorded" state; an empty string would read as
+        // "recorded, says nothing" (#37 verify F3b).
         return .single(reply.tool ?? tool, version, resolution: .adapterReported,
-                       interpreter: reply.interpreter)
+                       interpreter: reply.interpreter.flatMap { $0.isEmpty ? nil : $0 })
     }
 }
