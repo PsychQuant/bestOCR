@@ -38,7 +38,7 @@ Evidence-based OCR router(bestASR 的 OCR sibling)。README 是產品說明;
 
 ```bash
 swift build            # debug;release 加 -c release
-swift test             # 304 tests / 46 suites;Swift Testing(import Testing),不是 XCTest
+swift test             # 436 tests / 55 suites;Swift Testing(import Testing),不是 XCTest
 ```
 
 - **需要 Swift 6.3+**(transitive `mlx-swift` 的 tools-version floor)。repo 內
