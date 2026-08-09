@@ -752,6 +752,30 @@ struct ConsensusPipelineTests {
         #expect(!cleanMd.contains("⚠ ="))
     }
 
+    @Test func refusedTranscriptOneLinesNewlineBearingStem() async throws {
+        // POSIX filenames may contain newlines; the refused transcript embeds
+        // the stem, and SKILL.md tells agents to relay it verbatim — a
+        // newline in the name could forge an authoritative-looking block
+        // (R1 V15/L1). The on-disk file keeps the raw stem; the BODY text is
+        // collapsed.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let evil = tmp.appendingPathComponent("x\ny.png")
+        try FileManager.default.copyItem(at: img, to: evil)
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "aaaaaaaa"),
+            StubEngine(id: "B", availability: .available, text: "z1\nz2\nz3"),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: evil.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        #expect(summary.refused)
+        let md = try String(contentsOf: summary.outputMarkdown, encoding: .utf8)
+        #expect(md.contains("x⏎y.consensus.json"),
+                "the stem inside the transcript body must be newline-collapsed")
+    }
+
     @Test func extractedItemEmptinessPredicatesCoincide() {
         // The gate compares `normalized`, the report compares raw, votability
         // compares `canonical` — they agree only because the extractor trims

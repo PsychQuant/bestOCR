@@ -484,6 +484,19 @@ struct ServerTests {
         #expect(success.contains("no aligned items: tesseract"))
     }
 
+    @Test func renderMissingCountKeyReadsUnknownNotPrior() {
+        // R1 V15/L2: an engine ABSENT from the counts map is "unknown", not
+        // "measured zero" — dressing it as a prior claim would be a
+        // fabricated verdict. Unreachable via ds-lite today (same loop fills
+        // both maps); pinned so a future adjudicator can't regress it.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9, "b": 0.8],
+            informativeItems: ["a": 5]))
+        #expect(text.contains("competence: a 0.900 (n=5)"))
+        #expect(text.contains("competence: b 0.800 (n unknown"))
+        #expect(!text.contains("prior — no informative items"))
+    }
+
     @Test func renderRefusedReasonIsOneLined() {
         // Defense-in-depth: a reason that ever embeds outside text must not
         // be able to forge its own output lines (R1 security note).
