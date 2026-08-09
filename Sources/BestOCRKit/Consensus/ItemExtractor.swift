@@ -65,6 +65,14 @@ public enum ItemExtractor {
 
     // MARK: - Internals
 
+    /// KNOWN, TRACKED gap (#40): this recognizes markdown PIPE rows only.
+    /// Document-assembly engines (doc.*) deliberately emit tables as native
+    /// HTML (DocumentAdapterScripts — a lossy pipe conversion would drop
+    /// colspan/rowspan), so for exactly the engine class that CAN produce
+    /// real tables, cell split is guaranteed never to engage; those pages
+    /// extract as prose_line. The two decisions are individually correct and
+    /// mutually exclusive — resolving that interface is #40's scope, not a
+    /// quick predicate tweak here.
     private static func isTableRow(_ line: String) -> Bool {
         line.hasPrefix("|") && line.hasSuffix("|") && line.count >= 2
     }

@@ -217,8 +217,12 @@ measurement outcome, not a tool error): a co-answer gate
 (`BESTOCR_CONSENSUS_MIN_COANSWER`, default 0.2) and a CCT single-consensus
 check (eigenvalue ratio vs `BESTOCR_CONSENSUS_MIN_EIGEN_RATIO`, default 3,
 plus zero-loading detection — a partitioned run's "competence" would be an
-estimate of a quantity that does not exist). Both thresholds are literature
-conventions, not corpus-calibrated. Consensus is not ground
+estimate of a quantity that does not exist). The two thresholds have
+different provenance: the eigen ratio 3 is a CCT literature convention; the
+co-answer 0.2 is an uncalibrated single-sample induction from the run that
+motivated #38 — neither is corpus-calibrated, and the effective values are
+recorded in the report (`min_co_answer`) and on the output lines because
+both are env-overridable. Consensus is not ground
 truth — the report's `agreement` matrix surfaces inter-engine error
 correlation as a diagnostic, and the "-lite" estimator has no confusion
 matrix (no directional error discrimination). Local engines only; runs get

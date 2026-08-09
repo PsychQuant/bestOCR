@@ -20,12 +20,25 @@ public struct ConsensusRunSummary: Sendable {
     /// #39: single-consensus validity check outcome. nil = check did not run
     /// (majority, rover, or a co-answer refusal that never got that far).
     public let singleConsensus: SingleConsensusCheck?
+    /// #38 R1 V6: the measured co-answer share and the threshold in force,
+    /// carried so renderers can disclose them on PASSED runs too — the
+    /// threshold is env-overridable and matters most exactly when it was
+    /// changed (same rule #39 applies to its eigen threshold). nil = the
+    /// gate did not run for this path (sequence adjudicators).
+    public let coAnswerShare: Double?
+    public let minCoAnswer: Double?
+    /// Engines that produced output but zero alignable items — mirrored from
+    /// the report so renderers can call them out instead of letting them
+    /// silently vanish between `engines:` and the competence list (R1 V9).
+    public let enginesWithoutAlignedItems: [String]
 
     public init(outputMarkdown: URL, outputReport: URL, engines: [String],
                 skipped: [String: String], estimate: ConsensusEstimate,
                 runID: String, overwrote: Bool,
                 refused: Bool = false, refusalReason: String? = nil,
-                singleConsensus: SingleConsensusCheck? = nil) {
+                singleConsensus: SingleConsensusCheck? = nil,
+                coAnswerShare: Double? = nil, minCoAnswer: Double? = nil,
+                enginesWithoutAlignedItems: [String] = []) {
         self.outputMarkdown = outputMarkdown
         self.outputReport = outputReport
         self.engines = engines
@@ -36,6 +49,9 @@ public struct ConsensusRunSummary: Sendable {
         self.refused = refused
         self.refusalReason = refusalReason
         self.singleConsensus = singleConsensus
+        self.coAnswerShare = coAnswerShare
+        self.minCoAnswer = minCoAnswer
+        self.enginesWithoutAlignedItems = enginesWithoutAlignedItems
     }
 }
 
@@ -100,20 +116,20 @@ public enum ConsensusPipeline {
     }
 
     /// Page-wise extract + align across engines, then estimate.
-    /// Page-wise extract + align across engines, then estimate.
     ///
     /// The adjudicator is injected (#17). It defaults to Dawid-Skene-lite so
     /// every pre-existing call site keeps its exact behaviour; an unknown id
     /// must be rejected by the caller rather than silently defaulting here —
     /// running a different model under the requested one's estimand name is
     /// precisely the mislabelling this design exists to prevent.
+    ///
+    /// UNGATED low-level entry: the #38 co-answer gate and the #39
+    /// single-consensus gate live in `execute` only — a library caller of
+    /// this function gets raw adjudication with no refusal semantics (#61).
     public static func adjudicate(results: [String: OCRResult],
                                   adjudicator: any ConsensusAdjudicator
                                       = DawidSkeneLiteAdjudicator()) -> ConsensusEstimate {
-        var pages: Set<Int> = []
-        for r in results.values { for p in r.pages { pages.insert(p.page) } }
-
-        return adjudicator.adjudicate(items: alignedItems(results: results))
+        adjudicator.adjudicate(items: alignedItems(results: results))
     }
 
     /// Page-wise extract + align, shared by adjudication and the #38
@@ -138,22 +154,32 @@ public enum ConsensusPipeline {
 
     // MARK: - #38 co-answer gate
 
-    /// Share of aligned items with ≥2 non-empty responses — computed on
-    /// AlignedItems so the gate can run before the estimator (the report's
-    /// own figure is computed later from verdicts; same formula).
+    /// Share of VOTABLE aligned items with ≥2 non-empty responses. The
+    /// denominator is the votable population (items with at least one real
+    /// response — `ConsensusShared.votable`), NOT all aligned slots: an
+    /// all-empty placeholder item is an abstainer everywhere else in this
+    /// pipeline (#13), and counting abstainers in the denominator made the
+    /// gate refuse sparse pipe tables whose real cells were 100% co-answered
+    /// (R1 V1 — `gate = report × (1 − placeholderShare)`). This is now the
+    /// same population as the report's own `co_answer_share` (the report's
+    /// numerator predicate is raw-emptiness; raw/normalized/canonical
+    /// emptiness coincide by the extractor invariant pinned in tests).
     public static func coAnswerShare(of items: [AlignedItem]) -> Double {
-        guard !items.isEmpty else { return 0 }
-        let coAnswered = items.filter { item in
+        let votable = ConsensusShared.votable(items)
+        guard !votable.isEmpty else { return 0 }
+        let coAnswered = votable.filter { item in
             item.responses.values.filter { !$0.normalized.isEmpty }.count >= 2
         }.count
-        return Double(coAnswered) / Double(items.count)
+        return Double(coAnswered) / Double(votable.count)
     }
 
-    /// Response-count distribution ("1" → 1328 …): how many items got how
-    /// many engine responses — the structural picture behind a low share.
+    /// Response-count distribution ("1" → 1328 …) over VOTABLE items — the
+    /// structural picture behind a low share, on the same population the
+    /// share is computed from (R1 V1). All-empty placeholder items are
+    /// disclosed separately (`placeholder_only_items`), not as a "0" bucket.
     public static func responseCounts(of items: [AlignedItem]) -> [String: Int] {
         var counts: [String: Int] = [:]
-        for item in items {
+        for item in ConsensusShared.votable(items) {
             let n = item.responses.values.filter { !$0.normalized.isEmpty }.count
             counts["\(n)", default: 0] += 1
         }
@@ -164,22 +190,36 @@ public enum ConsensusPipeline {
     /// degenerate runs (#38 measured 0.0867); uncalibrated single-sample
     /// induction, env-overridable, evidence-pending (same discipline as the
     /// triage thresholds). Garbage values fall back to the default.
+    /// `0` is rejected DELIBERATELY, not as garbage: the gate cannot be
+    /// disabled by env — a legal setting must never let a true zero-co-answer
+    /// run through (near-zero values still weaken it; the effective value is
+    /// disclosed structurally as `min_co_answer` and on the passed line).
     public static func minCoAnswerThreshold(
         env: [String: String] = ProcessInfo.processInfo.environment
     ) -> Double {
         guard let raw = env["BESTOCR_CONSENSUS_MIN_COANSWER"], let v = Double(raw),
-              v > 0, v <= 1 else { return 0.2 }
+              v.isFinite, v > 0, v <= 1 else { return 0.2 }
         return v
     }
 
     /// nil = proceed; a String = refuse with this reason. Competence computed
     /// from near-zero co-answers is not a weak estimate of engine quality —
     /// it is an estimate of something else wearing the same shape (#38).
+    /// Both numbers print at %.4f — a %.2f threshold could render a
+    /// self-contradictory "0.0149 below threshold 0.01" (R1 V6; same fix #39
+    /// applied to its own reason string).
     public static func coAnswerGate(items: [AlignedItem], threshold: Double) -> String? {
+        guard !ConsensusShared.votable(items).isEmpty else {
+            // A page where nothing with content was extracted is a different
+            // diagnosis from "items exist but engines never co-answer" — no
+            // segmentation happened at all, so don't claim a mismatch (R1 F9).
+            return "no alignable items with content were extracted — empty page "
+                + "or unsupported layout; there is nothing to adjudicate"
+        }
         let share = coAnswerShare(of: items)
         guard share < threshold else { return nil }
         return "co_answer_share \(String(format: "%.4f", share)) below threshold "
-            + "\(String(format: "%.2f", threshold)) — alignment mostly never happened; "
+            + "\(String(format: "%.4f", threshold)) — alignment mostly never happened; "
             + "competence would measure segmentation mismatch, not engine quality"
     }
 
@@ -240,12 +280,24 @@ public enum ConsensusPipeline {
     public static func writeOutputs(estimate: ConsensusEstimate, engines: [String],
                                     skipped: [String: String], inputPath: String,
                                     outDir: URL,
-                                    singleConsensus: SingleConsensusCheck? = nil)
+                                    singleConsensus: SingleConsensusCheck? = nil,
+                                    minCoAnswer: Double? = nil)
         throws -> (markdown: URL, report: URL) {
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
         let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
 
         var lines: [String] = []
+        // #38 R1 V13: the ⚠ marks live in THIS file, and the issue's actual
+        // misreading happened here — a mark most often means "only one engine
+        // answered", not "engines disputed". Say so where the marks are, not
+        // only in the CLI/MCP summary (the plan promised this legend and the
+        // first implementation silently dropped it).
+        if estimate.items.contains(where: \.lowConsensus) {
+            lines.append("> ⚠ = low-consensus: fewer than two engines corroborated the "
+                         + "line — often a solo/unaligned item (single response), "
+                         + "not necessarily a dispute (#38)")
+            lines.append("")
+        }
         var currentPage = Int.min
         for item in estimate.items.sorted(by: { ($0.key.page, $0.key.index) < ($1.key.page, $1.key.index) }) {
             if item.key.page != currentPage {
@@ -258,7 +310,8 @@ public enum ConsensusPipeline {
         try lines.joined(separator: "\n").write(to: mdURL, atomically: true, encoding: .utf8)
 
         let report = ConsensusReport(estimate: estimate, engines: engines, skipped: skipped,
-                                     singleConsensus: singleConsensus)
+                                     singleConsensus: singleConsensus,
+                                     minCoAnswer: minCoAnswer)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let jsonURL = outDir.appendingPathComponent("\(stem).consensus.json")
@@ -370,9 +423,13 @@ public enum ConsensusPipeline {
         }
         let estimate: ConsensusEstimate
         var singleConsensus: SingleConsensusCheck?
+        var gateShare: Double?
+        var gateThreshold: Double?
         if AdjudicatorRegistry.isSequenceAdjudicator(adjudicatorID) {
             // Phase 5: ROVER consumes a confusion network built from raw page
             // text, not aligned items — the two inputs are genuinely different.
+            // NEITHER gate runs on this branch; the renderers disclose that
+            // (R1 V5) and #61 tracks unifying the refusal shape.
             estimate = adjudicateSequence(results: results, adjudicator: ROVERAdjudicator())
         } else {
             // Phase 3: the prior-weighted model needs a prior built from
@@ -386,19 +443,28 @@ public enum ConsensusPipeline {
             // #38 co-answer gate — BEFORE any estimator: competence computed
             // from near-zero co-answers measures segmentation mismatch, not
             // engine quality. A refusal is a measurement outcome (exit 0,
-            // full alignment diagnostics), not a tool error. Pooling
-            // adjudicators only; ROVER's confusion-network alignment is a
-            // different model with its own co-answer semantics (out of scope).
+            // full alignment diagnostics), not a tool error. Applies to every
+            // NON-SEQUENCE adjudicator — including majority, which claims no
+            // competence but whose transcript carries the same solo-as-dispute
+            // misreading the gate exists to prevent (R1 V5; `poolsRaters` is
+            // the narrower #39 predicate, deliberately not reused here).
+            // ROVER's confusion-network alignment is a different model with
+            // its own co-answer semantics — it bypasses BOTH gates (#61).
             let items = alignedItems(results: results)
-            if let reason = coAnswerGate(items: items,
-                                         threshold: minCoAnswerThreshold()) {
+            let threshold = minCoAnswerThreshold()
+            let share = coAnswerShare(of: items)
+            gateShare = share
+            gateThreshold = threshold
+            if let reason = coAnswerGate(items: items, threshold: threshold) {
                 // The single-consensus check did not run for a co-answer
                 // refusal — nil check, honestly (order: #38 before #39).
-                return try refusedRun(reason: reason, check: nil, items: items,
+                return try refusedRun(reason: reason, kind: "co_answer",
+                                      check: nil, items: items,
                                       engines: results.keys.sorted(),
                                       skipped: skipped, adjudicatorID: adjudicatorID,
                                       inputPath: inputPath, outDir: outDir,
-                                      overwrote: overwrote)
+                                      overwrote: overwrote,
+                                      coAnswerShare: share, minCoAnswer: threshold)
             }
             // #39 single-consensus gate (see `singleConsensusGate` doc for
             // the ordering contract): failed → refuse with the check
@@ -408,11 +474,13 @@ public enum ConsensusPipeline {
                                            adjudicatorID: adjudicatorID)
             singleConsensus = gate.check
             if let reason = gate.refusalReason {
-                return try refusedRun(reason: reason, check: gate.check, items: items,
+                return try refusedRun(reason: reason, kind: "single_consensus",
+                                      check: gate.check, items: items,
                                       engines: results.keys.sorted(),
                                       skipped: skipped, adjudicatorID: adjudicatorID,
                                       inputPath: inputPath, outDir: outDir,
-                                      overwrote: overwrote)
+                                      overwrote: overwrote,
+                                      coAnswerShare: share, minCoAnswer: threshold)
             }
             estimate = adjudicator.adjudicate(items: items)
         }
@@ -432,7 +500,8 @@ public enum ConsensusPipeline {
                                        engines: results.keys.sorted(),
                                        skipped: skipped,
                                        inputPath: inputPath, outDir: outDir,
-                                       singleConsensus: singleConsensus)
+                                       singleConsensus: singleConsensus,
+                                       minCoAnswer: gateThreshold)
 
         // Provenance (#12): one explicit composite entry — the ensemble is
         // the unit under measurement. Promotion to evidence rows stays behind
@@ -455,7 +524,15 @@ public enum ConsensusPipeline {
                                    estimate: estimate,
                                    runID: entry.id,
                                    overwrote: overwrote,
-                                   singleConsensus: singleConsensus)
+                                   singleConsensus: singleConsensus,
+                                   coAnswerShare: gateShare,
+                                   minCoAnswer: gateThreshold,
+                                   enginesWithoutAlignedItems:
+                                       results.keys.sorted().filter { engine in
+                                           !estimate.items.contains {
+                                               ($0.responses[engine]?.isEmpty == false)
+                                           }
+                                       })
     }
 
     /// Shared refusal writer for the #38 co-answer gate and the #39
@@ -463,22 +540,30 @@ public enum ConsensusPipeline {
     /// entry (runID "" — structurally un-ingestable), returned as a summary
     /// with exit-0 semantics (a refusal is a measurement outcome, not a
     /// tool error).
-    private static func refusedRun(reason: String, check: SingleConsensusCheck?,
+    private static func refusedRun(reason: String, kind: String,
+                                   check: SingleConsensusCheck?,
                                    items: [AlignedItem], engines: [String],
                                    skipped: [String: String], adjudicatorID: String,
                                    inputPath: String, outDir: URL,
-                                   overwrote: Bool)
+                                   overwrote: Bool,
+                                   coAnswerShare: Double, minCoAnswer: Double)
         throws -> ConsensusRunSummary {
         let report = ConsensusReport.refused(items: items, engines: engines,
                                              skipped: skipped,
                                              adjudicator: adjudicatorID,
-                                             reason: reason,
+                                             reason: reason, kind: kind,
+                                             minCoAnswer: minCoAnswer,
                                              singleConsensus: check)
         try FileManager.default.createDirectory(at: outDir,
                                                 withIntermediateDirectories: true)
         let stem = URL(fileURLWithPath: inputPath).deletingPathExtension().lastPathComponent
         let mdURL = outDir.appendingPathComponent("\(stem).consensus.md")
-        try ("# Consensus refused\n\n\(reason)\n\nSee \(stem).consensus.json "
+        // `stem` is a filename component from OUTSIDE — a newline in it could
+        // forge an authoritative-looking block in the refusal transcript, the
+        // one artifact SKILL.md tells agents to relay verbatim (R1 V15/L1).
+        // The file NAME on disk keeps the raw stem; only the body text is
+        // collapsed.
+        try ("# Consensus refused\n\n\(reason)\n\nSee \(oneLine(stem)).consensus.json "
              + "for the alignment diagnostics (response-count distribution, "
              + "agreement matrix). No competence was estimated.\n")
             .write(to: mdURL, atomically: true, encoding: .utf8)
@@ -494,7 +579,9 @@ public enum ConsensusPipeline {
                                         diagnostics: AdjudicatorDiagnostics()),
             runID: "", overwrote: overwrote,
             refused: true, refusalReason: reason,
-            singleConsensus: check)
+            singleConsensus: check,
+            coAnswerShare: coAnswerShare, minCoAnswer: minCoAnswer,
+            enginesWithoutAlignedItems: report.enginesWithoutAlignedItems)
     }
 }
 
@@ -515,6 +602,14 @@ struct ConsensusReport: Codable {
     /// and its model-specific fields are optional, so "this model has no such
     /// notion" is representable rather than being flattened to a zero (#17).
     /// Legacy files decode as 1/2 with `adjudicator` defaulting to ds-lite.
+    ///
+    /// Additive-optional fields under v3 (no bump — every one decodes to an
+    /// honest default on older files, so two v3 files may differ in keys):
+    /// #38 added `refused` / `refusal_reason` / `response_counts` /
+    /// `informative_items`; #39 added `single_consensus`; the #38 verify
+    /// round added `min_co_answer` / `refusal_kind` / `placeholder_only_items`
+    /// and made `low_consensus` optional (absent on refused reports — nil,
+    /// never [], because no adjudicator classified anything).
     static let currentSchemaVersion = 3
 
     let schemaVersion: Int
@@ -540,7 +635,21 @@ struct ConsensusReport: Codable {
     /// must never look alike.
     let refused: Bool
     let refusalReason: String?
-    /// Response-count distribution over aligned items ("1" → solo items …).
+    /// Which gate refused: "co_answer" (#38) or "single_consensus" (#39).
+    /// Two different refusals must not share one indistinguishable shape
+    /// (R1 V10). nil on non-refused reports.
+    let refusalKind: String?
+    /// The co-answer threshold in force for this run — structural, both
+    /// paths, because it is env-overridable and free text is not a record
+    /// (R1 V6; the #39 `min_ratio` precedent). nil when the gate did not run
+    /// (sequence adjudicators, legacy files).
+    let minCoAnswer: Double?
+    /// All-empty placeholder alignment slots excluded from the co-answer
+    /// denominator (R1 V1) — disclosed so a sparse-table run's structure
+    /// stays visible. nil when the count was not taken (non-refused reports:
+    /// the estimator drops placeholders upstream of this layer).
+    let placeholderOnlyItems: Int?
+    /// Response-count distribution over votable items ("1" → solo items …).
     let responseCounts: [String: Int]?
     /// Per-engine informative-item counts behind overallCompetence (#38):
     /// n = 0 → the figure is the bare Laplace prior, not a measurement.
@@ -554,7 +663,10 @@ struct ConsensusReport: Codable {
     let overallCompetence: [String: Double]?
     let competenceByKind: [String: [String: Double]]?
     let agreement: [String: [String: Double]]
-    let lowConsensus: [LowConsensusItem]
+    /// nil on refused reports — no adjudicator ran, so "which items are
+    /// low-consensus" is undefined, and `[]` would be the array shape of the
+    /// zero this initializer's own rule forbids ("nil, never 0"; R1 V12).
+    let lowConsensus: [LowConsensusItem]?
 
     enum CodingKeys: String, CodingKey {
         case engines, skipped, iterations, converged, agreement
@@ -568,6 +680,9 @@ struct ConsensusReport: Codable {
         case lowConsensus = "low_consensus"
         case refused
         case refusalReason = "refusal_reason"
+        case refusalKind = "refusal_kind"
+        case minCoAnswer = "min_co_answer"
+        case placeholderOnlyItems = "placeholder_only_items"
         case responseCounts = "response_counts"
         case informativeItems = "informative_items"
         case singleConsensus = "single_consensus"
@@ -591,6 +706,9 @@ struct ConsensusReport: Codable {
             try c.decodeIfPresent([String].self, forKey: .enginesWithoutAlignedItems) ?? []
         self.refused = try c.decodeIfPresent(Bool.self, forKey: .refused) ?? false
         self.refusalReason = try c.decodeIfPresent(String.self, forKey: .refusalReason)
+        self.refusalKind = try c.decodeIfPresent(String.self, forKey: .refusalKind)
+        self.minCoAnswer = try c.decodeIfPresent(Double.self, forKey: .minCoAnswer)
+        self.placeholderOnlyItems = try c.decodeIfPresent(Int.self, forKey: .placeholderOnlyItems)
         self.responseCounts = try c.decodeIfPresent([String: Int].self, forKey: .responseCounts)
         self.informativeItems = try c.decodeIfPresent([String: Int].self, forKey: .informativeItems)
         self.singleConsensus = try c.decodeIfPresent(SingleConsensusCheck.self,
@@ -599,16 +717,19 @@ struct ConsensusReport: Codable {
         self.competenceByKind = try c.decodeIfPresent([String: [String: Double]].self,
                                                       forKey: .competenceByKind)
         self.agreement = try c.decode([String: [String: Double]].self, forKey: .agreement)
-        self.lowConsensus = try c.decode([LowConsensusItem].self, forKey: .lowConsensus)
+        self.lowConsensus = try c.decodeIfPresent([LowConsensusItem].self, forKey: .lowConsensus)
     }
 
     init(estimate: ConsensusEstimate, engines: [String], skipped: [String: String],
-         singleConsensus: SingleConsensusCheck? = nil) {
+         singleConsensus: SingleConsensusCheck? = nil, minCoAnswer: Double? = nil) {
         self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
         self.skipped = skipped
         self.refused = false
         self.refusalReason = nil
+        self.refusalKind = nil
+        self.minCoAnswer = minCoAnswer
+        self.placeholderOnlyItems = nil
         self.singleConsensus = singleConsensus
         self.responseCounts = Dictionary(grouping: estimate.items) { item in
             item.responses.values.filter { !$0.isEmpty }.count
@@ -644,18 +765,22 @@ struct ConsensusReport: Codable {
     }
 
     /// #38 refused shape: alignment diagnostics preserved, competence absent —
-    /// no estimator ran, so iterations/converged/competence are nil, never 0.
+    /// no estimator ran, so iterations/converged/competence are nil, never 0
+    /// (and `low_consensus` is nil, never [] — same rule, array shape).
     static func refused(items: [AlignedItem], engines: [String],
                         skipped: [String: String], adjudicator: String,
-                        reason: String,
+                        reason: String, kind: String = "co_answer",
+                        minCoAnswer: Double? = nil,
                         singleConsensus: SingleConsensusCheck? = nil) -> ConsensusReport {
-        ConsensusReport(refusedWith: reason, items: items, engines: engines,
+        ConsensusReport(refusedWith: reason, kind: kind, items: items, engines: engines,
                         skipped: skipped, adjudicator: adjudicator,
+                        minCoAnswer: minCoAnswer,
                         singleConsensus: singleConsensus)
     }
 
-    private init(refusedWith reason: String, items: [AlignedItem],
+    private init(refusedWith reason: String, kind: String, items: [AlignedItem],
                  engines: [String], skipped: [String: String], adjudicator: String,
+                 minCoAnswer: Double?,
                  singleConsensus: SingleConsensusCheck?) {
         self.schemaVersion = Self.currentSchemaVersion
         self.engines = engines
@@ -663,8 +788,15 @@ struct ConsensusReport: Codable {
         self.adjudicator = adjudicator
         self.refused = true
         self.refusalReason = reason
+        self.refusalKind = kind
+        self.minCoAnswer = minCoAnswer
         self.singleConsensus = singleConsensus
-        self.itemCount = items.count
+        // item_count is the VOTABLE population — the same one the share and
+        // the response-count distribution are computed on (R1 V1); the
+        // excluded all-empty slots are disclosed alongside, not hidden.
+        let votableCount = ConsensusShared.votable(items).count
+        self.itemCount = votableCount
+        self.placeholderOnlyItems = items.count - votableCount
         self.iterations = nil
         self.converged = nil
         self.coAnswerShare = ConsensusPipeline.coAnswerShare(of: items)
@@ -676,6 +808,6 @@ struct ConsensusReport: Codable {
         self.overallCompetence = nil
         self.competenceByKind = nil
         self.agreement = ConsensusEstimator.agreementMatrix(items: items, engines: engines)
-        self.lowConsensus = []
+        self.lowConsensus = nil
     }
 }

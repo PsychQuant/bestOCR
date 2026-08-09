@@ -23,17 +23,31 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
 
 ## 誠實邊界（必轉述）
 
-- **run 可能誠實拒絕（#38）**：co-answered items 佔比低於閾值（預設 0.2，
-  `BESTOCR_CONSENSUS_MIN_COANSWER` 覆寫）時輸出 `REFUSED` 而非 competence ——
-  對齊幾乎沒發生時，competence 量到的是切分不匹配、不是引擎品質。refused
-  報告保留全部對齊診斷（response-count 分佈、agreement 矩陣）供人工判讀，
-  必須原樣轉述、不可略過 refusal 自行摘要 items。
-- **competence 要連同 n 讀（#38）**：每個 competence 帶 informative-item 數
-  `(n=X)`；`(prior — no informative items)` 表示該值是 Laplace 先驗、不是量測
-  —— 轉述時不可把 n=0 的引擎與實測引擎並列比較。
+- **run 可能誠實拒絕（#38）**：votable items（至少一個引擎有真實回應；全空
+  佔位 slot 不計入分母）中 co-answered 佔比低於閾值（預設 0.2，
+  `BESTOCR_CONSENSUS_MIN_COANSWER` 覆寫；0.2 是單樣本歸納值非文獻慣例，
+  evidence-pending）時輸出 `REFUSED` 而非 competence —— 對齊幾乎沒發生時，
+  competence 量到的是切分不匹配、不是引擎品質。refused 報告保留全部對齊診斷
+  （response-count 分佈、agreement 矩陣、`placeholder_only_items`）供人工
+  判讀，必須原樣轉述、不可略過 refusal 自行摘要 items。**兩種 REFUSED 要分開
+  轉述**（JSON `refusal_kind`）：`co_answer` 的訊息以 `co_answer_share` 或
+  「no alignable items」開頭；`single_consensus` 是 #39 的檢定。**適用範圍是
+  封閉列舉**：此 gate 管 ds-lite / ds-full / prior-weighted / irt / majority；
+  **rover 不經過此 gate**（輸出有 `co-answer gate: not applied` 行，#61），
+  不得依相似類推。**通過 gate ≠ competence 可讀**：門檻正上方的 run 照樣
+  產出大量 solo —— 判讀 competence 永遠以 `(n=X)` 與 items 行為準，passed
+  輸出的 `co-answer: share …(threshold …)` 行要一併轉述（env 可覆寫，門檻
+  非恆為 0.2）。
+- **competence 要連同 n 讀（#38）**：n 的來源是**封閉列舉**——ds-lite 與
+  ds-full 帶 `(n=X)`；irt 與 rover 印 `(n not reported by <id>)`（該模型
+  未報告 n，**不是** n 很大）；majority 與 prior-weighted 無 competence 宣稱。
+  `(prior — no informative items)` 表示該值是 Laplace 先驗、不是量測 ——
+  這類引擎**不印數值**且排在實測引擎之後，轉述時不可把它們與實測引擎並列
+  比較。**2 引擎 run 的 competence 不可用於排名**（輸出有對應 note）：兩個
+  引擎的值恆等於 (n+1)/(n+2)、是對齊結構的確定函數，與品質無關（#60）。
 - **solo ≠ 分歧（#38）**：transcript 的 ⚠ 含「只有單一引擎回應、從未對齊」的
-  solo items —— 那是切分差異，不是引擎間對此內容有爭議。items 行的
-  solo/unaligned 計數要一併轉述。
+  solo items —— 那是切分差異，不是引擎間對此內容有爭議。transcript 開頭的
+  legend 行與 items 行的 solo/unaligned 計數要一併轉述。
 - **partition refusal = estimand 不存在（#39）**：pooling estimator 假設所有
   引擎讀同一份 latent answer key；single-consensus 檢定（eigenvalue ratio ≥ 3
   預設，`BESTOCR_CONSENSUS_MIN_EIGEN_RATIO` 覆寫 + 首因子零 loading 偵測）
@@ -64,9 +78,13 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
   （分不出「申→甲」與「甲→申」哪個方向更常錯）。
 - 資源上限：每頁最多 2000 個 item、單行最長 4000 字元，超限截斷（防退化輸出
   造成 CPU/OOM）；只跑本機引擎，顯式指定 cloud／需網路引擎會被拒絕。
-- 表格支援限 pipe 語法（`| a | b |`）：escaped pipe（`\|`）與無首尾 `|` 的表格
-  不支援；math 偵測限 `$`/`$$`/`\(`/`\[`/常見數學 environment——bare LaTeX 指令
-  與 Unicode 方程不會被分類為 math（仍以一般行參與共識）。
+- 表格支援限 markdown pipe 語法（`| a | b |`）：escaped pipe（`\|`）與無首尾
+  `|` 的表格不支援；**HTML 表格（`<table>`/`<td>`）整段不拆 cell** ——
+  document-assembly 引擎（doc.*）刻意輸出原生 HTML 表格（pipe 轉換有損
+  colspan/rowspan），所以正是最會產表格的引擎類別，cell split 保證不會發生，
+  該頁以 prose_line 參與對齊（#40 追蹤）；math 偵測限 `$`/`$$`/`\(`/`\[`/常見
+  數學 environment——bare LaTeX 指令與 Unicode 方程不會被分類為 math（仍以
+  一般行參與共識）。
 - 報告 JSON `schema_version: 2` 起 `responses`／consensus 文字為各引擎**原始
   rendering**（v1 為 normalized 文字）；空 table cell 是位置佔位，不參與投票，
   **全空的 aligned slot 會整個省略**（`item_count` 是「至少一個真實回應的

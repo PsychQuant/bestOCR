@@ -479,6 +479,295 @@ struct ConsensusPipelineTests {
         #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "banana"]) == 0.2)
         #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "-1"]) == 0.2)
         #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "1.5"]) == 0.2)
+        // R1 V15 (R9/L4): the behaviors below were correct but unpinned —
+        // rewrite the guard as e.g. `abs(v) <= 1` and one of these goes red.
+        // "0" is rejected DELIBERATELY: the gate cannot be disabled by env.
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "0"]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "1"]) == 1.0)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "nan"]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "inf"]) == 0.2)
+        #expect(ConsensusPipeline.minCoAnswerThreshold(env: ["BESTOCR_CONSENSUS_MIN_COANSWER": "-inf"]) == 0.2)
+    }
+
+    // MARK: - #38 verify R1 fix round
+
+    /// A sparse pipe table both engines read IDENTICALLY: 10 real co-answered
+    /// cells + 90 all-empty placeholder slots. Placeholders are abstainers
+    /// everywhere in this pipeline — counting them in the gate denominator
+    /// refused runs whose real content was 100% corroborated (R1 V1).
+    private func sparseTableItems() -> [AlignedItem] {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .tableCell),
+                                     responses: ["a": "v-\(i)", "b": "v-\(i)"]))
+        }
+        for i in 10..<100 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .tableCell),
+                                     responses: ["a": "", "b": ""]))
+        }
+        return items
+    }
+
+    @Test func sparseTableWithFullyCoAnsweredRealCellsPassesGate() {
+        let items = sparseTableItems()
+        #expect(ConsensusPipeline.coAnswerShare(of: items) == 1.0,
+                "placeholder slots must not dilute the share (votable denominator)")
+        #expect(ConsensusPipeline.coAnswerGate(items: items, threshold: 0.2) == nil)
+        // The distribution is on the same votable population — no "0" bucket.
+        let counts = ConsensusPipeline.responseCounts(of: items)
+        #expect(counts["2"] == 10)
+        #expect(counts["0"] == nil)
+    }
+
+    @Test func refusedSparseRunDisclosesPlaceholderOnlyItems() {
+        // 90 placeholders + 10 SOLO real cells → votable share 0/10 → refuse;
+        // item_count is the votable population, the excluded slots disclosed.
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .tableCell),
+                                     responses: ["a": "v-\(i)"]))
+        }
+        for i in 10..<100 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .tableCell),
+                                     responses: ["a": "", "b": ""]))
+        }
+        let report = ConsensusReport.refused(items: items, engines: ["a", "b"],
+                                             skipped: [:], adjudicator: "ds-lite",
+                                             reason: "r", minCoAnswer: 0.2)
+        #expect(report.itemCount == 10)
+        #expect(report.placeholderOnlyItems == 90)
+    }
+
+    @Test func emptyVotablePopulationGetsItsOwnRefusalReason() {
+        // "Nothing with content extracted" is a different diagnosis from
+        // "items exist but engines never co-answer" (R1 V15/F9).
+        let placeholders = [AlignedItem(key: ItemKey(page: 1, index: 0, kind: .tableCell),
+                                        responses: ["a": "", "b": ""])]
+        let reason = ConsensusPipeline.coAnswerGate(items: placeholders, threshold: 0.2)
+        #expect(reason?.contains("no alignable items with content") == true)
+        #expect(reason?.contains("segmentation mismatch") != true)
+        let emptyReason = ConsensusPipeline.coAnswerGate(items: [], threshold: 0.2)
+        #expect(emptyReason?.contains("no alignable items with content") == true)
+    }
+
+    @Test func shareExactlyAtThresholdPasses() {
+        // Strict inequality: share == threshold proceeds (R1 V15/R9).
+        var items: [AlignedItem] = []
+        items.append(AlignedItem(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                                 responses: ["a": "x", "b": "x"]))
+        for i in 1..<5 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "solo-\(i)"]))
+        }
+        #expect(ConsensusPipeline.coAnswerShare(of: items) == 0.2)
+        #expect(ConsensusPipeline.coAnswerGate(items: items, threshold: 0.2) == nil)
+    }
+
+    @Test func gateReasonPrintsThresholdAtFullPrecision() {
+        // %.2f could claim "below threshold 0.01" for a 0.015 threshold —
+        // self-contradictory text (R1 V6/M3). Both numbers print %.4f.
+        let reason = ConsensusPipeline.coAnswerGate(items: soloHeavyItems(),
+                                                    threshold: 0.0725)
+        #expect(reason?.contains("threshold 0.0725") == true)
+    }
+
+    @Test func refusedReportCarriesStructuredGateFields() throws {
+        // R1 V6/V10/V12: the effective threshold and the refusal kind are
+        // structured fields, and low_consensus is ABSENT (nil, never [] —
+        // no adjudicator classified anything).
+        let report = ConsensusReport.refused(items: soloHeavyItems(),
+                                             engines: ["doc.marker", "vision", "ext.surya"],
+                                             skipped: [:], adjudicator: "ds-lite",
+                                             reason: "r", kind: "co_answer",
+                                             minCoAnswer: 0.2)
+        #expect(report.refusalKind == "co_answer")
+        #expect(report.minCoAnswer == 0.2)
+        #expect(report.lowConsensus == nil)
+        let json = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
+        #expect(json.contains("\"min_co_answer\""))
+        #expect(json.contains("\"refusal_kind\""))
+        #expect(!json.contains("\"low_consensus\""))
+        let decoded = try JSONDecoder().decode(ConsensusReport.self,
+                                               from: Data(json.utf8))
+        #expect(decoded.refusalKind == "co_answer")
+        #expect(decoded.minCoAnswer == 0.2)
+        #expect(decoded.lowConsensus == nil)
+    }
+
+    @Test func refusedRunWritesNoRunlogEntryAndReportsEmptyRunID() async throws {
+        // The evidence firewall for refused runs is "no runlog entry exists"
+        // — previously held by convention only; this pins it (R1 V11/M1/R11).
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "aaaaaaaa"),
+            StubEngine(id: "B", availability: .available, text: "z1\nz2\nz3"),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog)
+        #expect(summary.refused)
+        #expect(summary.runID.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: runLog.fileURL.path),
+                "a refused run must not create any runlog entry")
+    }
+
+    @Test func evidenceIngestRejectsEmptyRunID() throws {
+        // "" is a prefix of every id — with one entry in the runlog it used
+        // to silently promote that unrelated entry (R1 V11).
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ingest-empty-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let runLog = RunLog(fileURL: tmp.appendingPathComponent("runlog.jsonl"))
+        try runLog.append(RunLogEntry(
+            consensusOf: ["A": result("A", "x"), "B": result("B", "x")],
+            input: "/tmp/in.pdf", output: "/tmp/out.md",
+            quality: .init(estimand: "consensus.low_consensus_share@v1", value: 0.1,
+                           reference: "engines=A+B")))
+        do {
+            _ = try EvidenceIngest.findEntry(id: "", in: runLog.fileURL)
+            Issue.record("empty id must be rejected, not matched as a universal prefix")
+        } catch let error as OCREngineError {
+            #expect(error.message.contains("empty run id"))
+        }
+    }
+
+    @Test func legacyReportWithoutAnyNewKeysDecodesToDefaults() throws {
+        // A REAL legacy decode: strip every post-#17 additive key from the
+        // JSON before decoding (the previous "legacy" test round-tripped a
+        // current report, stripping nothing — R1 V15/codex).
+        var items: [AlignedItem] = []
+        for i in 0..<4 {
+            items.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "x-\(i)", "b": "x-\(i)"]))
+        }
+        let report = ConsensusReport(estimate: ConsensusEstimator.estimate(items: items),
+                                     engines: ["a", "b"], skipped: [:],
+                                     minCoAnswer: 0.2)
+        var dict = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(report)) as! [String: Any]
+        for key in ["refused", "refusal_reason", "refusal_kind", "min_co_answer",
+                    "placeholder_only_items", "response_counts", "informative_items",
+                    "single_consensus", "co_answer_share",
+                    "engines_without_aligned_items", "adjudicator", "schema_version"] {
+            dict.removeValue(forKey: key)
+        }
+        let legacy = try JSONDecoder().decode(
+            ConsensusReport.self, from: JSONSerialization.data(withJSONObject: dict))
+        #expect(legacy.schemaVersion == 1)
+        #expect(legacy.adjudicator == "ds-lite")
+        #expect(legacy.refused == false)
+        #expect(legacy.refusalKind == nil)
+        #expect(legacy.minCoAnswer == nil)
+        #expect(legacy.coAnswerShare == 0)
+        #expect(legacy.informativeItems == nil)
+        #expect(legacy.lowConsensus != nil, "legacy normal reports carry low_consensus")
+    }
+
+    @Test func roverZeroCoAnswerStillThrows() async throws {
+        // rover bypasses BOTH gates; its only zero-co-answer protection is
+        // the post-estimator throw — unpinned until now (R1 V5/R6). Shape
+        // unification (throw → refused report) is #61.
+        //
+        // NOTE (found while pinning this): ROVER's network is TOTAL — an
+        // engine with no token votes an explicit epsilon STRING, which the
+        // guard's raw non-empty predicate counts as an answer. So for rover
+        // the throw is reachable ONLY when every engine produced zero
+        // tokens; one engine with text is enough to sail past it. Recorded
+        // in #61 — the rover-side co-answer semantics are weaker than the
+        // guard's wording suggests.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: ""),
+            StubEngine(id: "B", availability: .available, text: ""),
+        ])
+        do {
+            _ = try await ConsensusPipeline.execute(
+                inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+                pageSpec: "", languages: [], docType: "test",
+                outDir: tmp.appendingPathComponent("out"), registry: registry,
+                runLog: runLog, adjudicatorID: "rover")
+            Issue.record("rover with zero co-answered items must throw")
+        } catch let error as OCREngineError {
+            #expect(error.message.contains("no co-answered items"))
+        }
+    }
+
+    @Test func majoritySoloHeavyRunIsRefused() async throws {
+        // The gate applies to every non-sequence adjudicator — majority has
+        // no competence claim, but its transcript carries the same
+        // solo-as-dispute misreading. Previously true and untested (R1 V5/R7).
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "aaaaaaaa"),
+            StubEngine(id: "B", availability: .available, text: "z1\nz2\nz3"),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog, adjudicatorID: "majority")
+        #expect(summary.refused)
+        #expect(summary.refusalReason?.contains("co_answer_share") == true)
+    }
+
+    @Test func transcriptCarriesLowConsensusLegend() throws {
+        // The ⚠ marks live in the transcript, and the issue's misreading
+        // happened THERE — the plan promised a legend line and the first
+        // implementation silently dropped it (R1 V13).
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("legend-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let estimate = ConsensusEstimate(
+            adjudicator: "ds-lite",
+            items: [
+                ItemConsensus(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                              consensusText: "solo line", confidence: 1.0,
+                              lowConsensus: true, responses: ["a": "solo line"]),
+                ItemConsensus(key: ItemKey(page: 1, index: 1, kind: .proseLine),
+                              consensusText: "agreed line", confidence: 1.0,
+                              lowConsensus: false,
+                              responses: ["a": "agreed line", "b": "agreed line"]),
+            ],
+            agreement: [:], diagnostics: AdjudicatorDiagnostics())
+        let outputs = try ConsensusPipeline.writeOutputs(
+            estimate: estimate, engines: ["a", "b"], skipped: [:],
+            inputPath: "/tmp/in.png", outDir: tmp)
+        let md = try String(contentsOf: outputs.markdown, encoding: .utf8)
+        #expect(md.hasPrefix("> ⚠ = low-consensus"))
+        #expect(md.contains("not necessarily a dispute"))
+        // No low-consensus items → no legend noise.
+        let clean = ConsensusEstimate(
+            adjudicator: "ds-lite",
+            items: [ItemConsensus(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                                  consensusText: "agreed", confidence: 1.0,
+                                  lowConsensus: false,
+                                  responses: ["a": "agreed", "b": "agreed"])],
+            agreement: [:], diagnostics: AdjudicatorDiagnostics())
+        let cleanOut = try ConsensusPipeline.writeOutputs(
+            estimate: clean, engines: ["a", "b"], skipped: [:],
+            inputPath: "/tmp/in2.png", outDir: tmp)
+        let cleanMd = try String(contentsOf: cleanOut.markdown, encoding: .utf8)
+        #expect(!cleanMd.contains("⚠ ="))
+    }
+
+    @Test func extractedItemEmptinessPredicatesCoincide() {
+        // The gate compares `normalized`, the report compares raw, votability
+        // compares `canonical` — they agree only because the extractor trims
+        // before emitting. #40 will touch exactly that code; pin the
+        // invariant so a divergence goes red instead of silently skewing
+        // the share (R1 V15/L3).
+        let extracted = ItemExtractor.extract(
+            page: 1, text: "| 100 |  | x |\n|  |  |  |\nplain line\n   \n")
+        #expect(!extracted.isEmpty)
+        for item in extracted {
+            let canonical = ItemExtractor.canonicalLabel(item.normalized)
+            #expect(item.text.isEmpty == item.normalized.isEmpty)
+            #expect(item.normalized.isEmpty == canonical.isEmpty)
+        }
+        #expect(extracted.contains { $0.text.isEmpty },
+                "fixture must include at least one placeholder cell")
     }
 
     @Test func refusedReportShapeKeepsDiagnosticsDropsCompetence() throws {

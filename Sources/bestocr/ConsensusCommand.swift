@@ -5,8 +5,9 @@ import Foundation
 struct Consensus: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Multi-engine consensus OCR: run several engines over the same input, "
-            + "align items (line-primary, table cells split), and adjudicate with a "
-            + "Dawid-Skene-lite estimator. Writes <stem>.consensus.md (transcript, "
+            + "align items (line-primary; table cells split for markdown pipe rows only "
+            + "— HTML tables from doc.* engines are NOT split, #40), and adjudicate "
+            + "with a Dawid-Skene-lite estimator. Writes <stem>.consensus.md (transcript, "
             + "low-consensus items marked ⚠) and <stem>.consensus.json (per-engine "
             + "competence + low-consensus review list).")
 
@@ -87,7 +88,10 @@ struct Consensus: AsyncParsableCommand {
         }
         // #38: a refusal is a measurement outcome — say it first and plainly.
         if summary.refused {
-            print("REFUSED: \(summary.refusalReason ?? "co-answer share below threshold")")
+            // oneLine is defense-in-depth: today's reasons are built from two
+            // internal doubles, but the moment one embeds outside text this
+            // line becomes forgeable (R1 security note).
+            print("REFUSED: \(ConsensusPipeline.oneLine(summary.refusalReason ?? "co-answer share below threshold"))")
             print("No competence was estimated — the report carries the alignment")
             print("diagnostics (response-count distribution, agreement matrix).")
             // R1 F-10: on refusal the reader most needs to know which engines
@@ -95,6 +99,15 @@ struct Consensus: AsyncParsableCommand {
             if let check = summary.singleConsensus, !check.excludedEngines.isEmpty {
                 print("excluded: \(check.excludedEngines.joined(separator: ", "))"
                       + " — no co-answer data (not part of the refused check)")
+            }
+            // R1 V9: the JSON field promises these engines are "called out
+            // instead of silently missing" — a co-answer refusal names no
+            // engines at all without this line (its check is nil, so the
+            // excluded: branch above never fires for it).
+            if !summary.enginesWithoutAlignedItems.isEmpty {
+                print("no aligned items: "
+                      + summary.enginesWithoutAlignedItems.joined(separator: ", ")
+                      + " — produced output but nothing aligned")
             }
             // #13 F15c is END-TO-END: a refusal that replaced a previous
             // valid run's artifacts must say so here, not only in the
@@ -149,11 +162,33 @@ struct Consensus: AsyncParsableCommand {
                   + "competence but its alignment model is outside this check "
                   + "(#49); the single-key assumption is untested")
         }
+        // R1 V6: the co-answer gate's numbers appear on the PASSED path too —
+        // the threshold is env-overridable and matters most exactly when it
+        // was changed (the rule #39 already applies to its eigen threshold).
+        // Sequence adjudicators (rover) never ran the gate: say so instead of
+        // silently omitting the line (R1 V5; behavior unification is #61).
+        if let share = summary.coAnswerShare, let minShare = summary.minCoAnswer {
+            print(String(format: "co-answer: share %.4f (threshold %.4f — env-overridable)",
+                         share, minShare))
+        } else if AdjudicatorRegistry.isSequenceAdjudicator(est.adjudicator) {
+            print("co-answer gate: not applied — \(est.adjudicator)'s confusion-network "
+                  + "alignment has its own co-answer semantics (#61)")
+        }
+        // R1 V9 (success side): engines listed above that never aligned an
+        // item are absent from every map below — call them out.
+        if !summary.enginesWithoutAlignedItems.isEmpty {
+            print("no aligned items: "
+                  + summary.enginesWithoutAlignedItems.joined(separator: ", ")
+                  + " — produced output but nothing aligned")
+        }
         let rounds = est.diagnostics.iterations.map { " — \($0) iterations" } ?? ""
         // solo = single-engine items the aligner never grouped — NOT disputes
         // (#38: the ⚠ marks used to read as "engines disagreed here").
+        // == 1, not <= 1: a zero-response item is not "a single response"
+        // (structurally impossible for votable items today, but the predicate
+        // should say what the words claim — R1 V15/codex 5).
         let solo = est.items.filter { item in
-            item.responses.values.filter { !$0.isEmpty }.count <= 1
+            item.responses.values.filter { !$0.isEmpty }.count == 1
         }.count
         print("items: \(est.items.count) (\(est.items.filter(\.lowConsensus).count) low-consensus, "
               + "of which \(solo) solo/unaligned — single response, not a dispute)\(rounds)")
@@ -161,13 +196,43 @@ struct Consensus: AsyncParsableCommand {
         // printing an empty list that reads like "everyone scored nothing" (#17).
         if let competence = est.diagnostics.overallCompetence {
             let ns = est.diagnostics.informativeItems
-            for (id, c) in competence.sorted(by: { $0.value > $1.value }) {
-                // n makes a bare prior visibly different from a measurement (#38).
-                let suffix = ns.map { counts -> String in
-                    let n = counts[id] ?? 0
-                    return n == 0 ? " (prior — no informative items)" : " (n=\(n))"
-                } ?? ""
-                print(String(format: "competence: %@ %.3f%@", id, c, suffix))
+            // Measured values first, in deterministic value-then-id order —
+            // ties are the NORM here ((correct+1)/(n+2) is bit-identical for
+            // equal integers; the issue's own report had one) and Swift's
+            // sort is not stable across processes (R1 V15/F7, pre-existing,
+            // fixed while rewriting this line). Prior-only engines follow
+            // WITHOUT a numeric: printing 0.500 into the same sorted list
+            // invites exactly the comparison SKILL.md forbids (R1 V16).
+            var priorOnly: [String] = []
+            for (id, c) in competence.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) }) {
+                guard let counts = ns else {
+                    // This adjudicator reports competence without a count —
+                    // silence here would reprint the pre-#38 shape (R1 V2).
+                    print(String(format: "competence: %@ %.3f (n not reported by %@)",
+                                 id, c, est.adjudicator))
+                    continue
+                }
+                guard let n = counts[id] else {
+                    // Absent key ≠ measured zero — don't dress "unknown" up
+                    // as a prior claim (R1 V15/L2).
+                    print(String(format: "competence: %@ %.3f (n unknown — "
+                                 + "not reported for this engine)", id, c))
+                    continue
+                }
+                if n == 0 { priorOnly.append(id); continue }
+                print(String(format: "competence: %@ %.3f (n=%d)", id, c, n))
+            }
+            for id in priorOnly.sorted() {
+                print("competence: \(id) (prior — no informative items; "
+                      + "not comparable to measured engines)")
+            }
+            // R1 V3 (#60): with exactly two engines, every informative item
+            // is an agreement — being judged wrong is structurally impossible,
+            // so both competences equal (n+1)/(n+2) regardless of quality.
+            if competence.count == 2, ns != nil {
+                print("note: 2-engine run — competence is (n+1)/(n+2) by construction "
+                      + "(agreement-only corroboration); the values are identical and "
+                      + "carry no ranking information (#60)")
             }
         } else {
             print("competence: n/a — \(est.adjudicator) has no competence model")

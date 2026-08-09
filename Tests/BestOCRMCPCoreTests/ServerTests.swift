@@ -217,23 +217,31 @@ struct ServerTests {
     private func summaryFixture(check: SingleConsensusCheck?,
                                 adjudicator: String = "ds-lite",
                                 competence: [String: Double]? = nil,
+                                informativeItems: [String: Int]? = nil,
+                                items: [ItemConsensus] = [],
                                 skipped: [String: String] = [:],
                                 refused: Bool = false,
                                 refusalReason: String? = nil,
-                                overwrote: Bool = false) -> ConsensusRunSummary {
+                                overwrote: Bool = false,
+                                coAnswerShare: Double? = nil,
+                                minCoAnswer: Double? = nil,
+                                enginesWithoutAlignedItems: [String] = []) -> ConsensusRunSummary {
         ConsensusRunSummary(
             outputMarkdown: URL(fileURLWithPath: "/tmp/x.consensus.md"),
             outputReport: URL(fileURLWithPath: "/tmp/x.consensus.json"),
             engines: ["a", "b", "c"], skipped: skipped,
-            estimate: ConsensusEstimate(adjudicator: adjudicator, items: [],
+            estimate: ConsensusEstimate(adjudicator: adjudicator, items: items,
                                         agreement: [:],
                                         diagnostics: AdjudicatorDiagnostics(
                                             overallCompetence: competence,
                                             competence: nil, iterations: nil,
-                                            converged: nil, confusion: nil)),
+                                            converged: nil, confusion: nil,
+                                            informativeItems: informativeItems)),
             runID: "run-1", overwrote: overwrote,
             refused: refused, refusalReason: refusalReason,
-            singleConsensus: check)
+            singleConsensus: check,
+            coAnswerShare: coAnswerShare, minCoAnswer: minCoAnswer,
+            enginesWithoutAlignedItems: enginesWithoutAlignedItems)
     }
 
     @Test func renderShowsPassedSingleConsensusWithRatio() {
@@ -363,5 +371,125 @@ struct ServerTests {
         let finiteText = BestOCRMCPServer.renderConsensusSummary(summaryFixture(check: finite))
         #expect(finiteText.contains("2000000.00"))
         #expect(!finiteText.contains("rank-1"))
+    }
+
+    // MARK: - #38 render contract (verify R1 V4: previously ZERO coverage —
+    // deleting the whole informative-n block kept the suite green)
+
+    @Test func renderCompetenceCarriesInformativeN() {
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9, "b": 0.8],
+            informativeItems: ["a": 12, "b": 3]))
+        #expect(text.contains("competence: a 0.900 (n=12)"))
+        #expect(text.contains("competence: b 0.800 (n=3)"))
+    }
+
+    @Test func renderPriorOnlyEngineDropsNumericAndSortsAfterMeasured() {
+        // R1 V16 (codex 2): printing the Laplace 0.500 into the same sorted
+        // list invites exactly the comparison SKILL.md forbids — a prior-only
+        // engine gets no numeric and follows the measured engines.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.7, "b": 0.5],
+            informativeItems: ["a": 5, "b": 0]))
+        #expect(text.contains("competence: a 0.700 (n=5)"))
+        #expect(text.contains("competence: b (prior — no informative items"))
+        #expect(!text.contains("0.500"))
+        let measuredPos = text.range(of: "competence: a")!.lowerBound
+        let priorPos = text.range(of: "competence: b")!.lowerBound
+        #expect(measuredPos < priorPos)
+    }
+
+    @Test func renderNilInformativeMapSaysNotReported() {
+        // R1 V2: ds-full/irt used to print the bare pre-#38 shape — an
+        // adjudicator that reports competence without a count must say so.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, adjudicator: "irt", competence: ["a": 0.868, "b": 0.868]))
+        #expect(text.contains("(n not reported by irt)"))
+        #expect(!text.contains("(n="))
+    }
+
+    @Test func renderCompetenceTieBreaksDeterministically() {
+        // R1 V15/F7 (pre-existing): equal doubles are the NORM here and
+        // Swift's sort is not stable across processes — id breaks the tie.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["zeta": 0.868, "alpha": 0.868],
+            informativeItems: ["zeta": 4, "alpha": 4]))
+        let alphaPos = text.range(of: "competence: alpha")!.lowerBound
+        let zetaPos = text.range(of: "competence: zeta")!.lowerBound
+        #expect(alphaPos < zetaPos)
+    }
+
+    @Test func renderTwoEngineRunCarriesLockstepNote() {
+        // R1 V3 (#60): with two engines every informative item is an
+        // agreement — competence is (n+1)/(n+2) by construction and the
+        // ranking is vacuous; the reader must be told at the point of use.
+        let two = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.969, "b": 0.969],
+            informativeItems: ["a": 30, "b": 30]))
+        #expect(two.contains("2-engine run"))
+        #expect(two.contains("#60"))
+        let three = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9, "b": 0.8, "c": 0.7],
+            informativeItems: ["a": 5, "b": 5, "c": 5]))
+        #expect(!three.contains("2-engine run"))
+    }
+
+    @Test func renderPassedRunDisclosesCoAnswerShareAndThreshold() {
+        // R1 V6: the gate's numbers appear on the PASSED path — the
+        // threshold is env-overridable and matters most when changed.
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9], informativeItems: ["a": 5],
+            coAnswerShare: 0.6667, minCoAnswer: 0.2))
+        #expect(text.contains("co-answer: share 0.6667 (threshold 0.2000"))
+    }
+
+    @Test func renderSequenceAdjudicatorDisclosesGateNotApplied() {
+        // R1 V5: rover never ran the co-answer gate — silence read as
+        // "gate protected this run", which is false (#61).
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, adjudicator: "rover", competence: ["a": 0.8]))
+        #expect(text.contains("co-answer gate: not applied"))
+        #expect(text.contains("#61"))
+    }
+
+    @Test func renderSoloCountsExactlyOneResponse() {
+        // #38's items line, previously untested (R1 V4); == 1 not <= 1
+        // (a zero-response item is not "a single response" — codex 5).
+        let items = [
+            ItemConsensus(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                          consensusText: "solo", confidence: 1.0,
+                          lowConsensus: true, responses: ["a": "solo"]),
+            ItemConsensus(key: ItemKey(page: 1, index: 1, kind: .proseLine),
+                          consensusText: "agreed", confidence: 1.0,
+                          lowConsensus: false,
+                          responses: ["a": "agreed", "b": "agreed"]),
+        ]
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, items: items))
+        #expect(text.contains("items: 2 (1 low-consensus, of which 1 solo/unaligned"))
+        #expect(text.contains("single response, not a dispute"))
+    }
+
+    @Test func renderCallsOutEnginesWithoutAlignedItems() {
+        // R1 V9: the JSON promises these engines are "called out instead of
+        // silently missing" — both surfaces, both paths, must name them.
+        let refused = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, refused: true,
+            refusalReason: "co_answer_share 0.0867 below threshold 0.2000 — x",
+            enginesWithoutAlignedItems: ["tesseract"]))
+        #expect(refused.contains("no aligned items: tesseract"))
+        let success = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9], informativeItems: ["a": 5],
+            enginesWithoutAlignedItems: ["tesseract"]))
+        #expect(success.contains("no aligned items: tesseract"))
+    }
+
+    @Test func renderRefusedReasonIsOneLined() {
+        // Defense-in-depth: a reason that ever embeds outside text must not
+        // be able to forge its own output lines (R1 security note).
+        let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, refused: true,
+            refusalReason: "line1\ncompetence: forged 0.999"))
+        #expect(text.contains("REFUSED: line1⏎competence: forged 0.999"))
     }
 }

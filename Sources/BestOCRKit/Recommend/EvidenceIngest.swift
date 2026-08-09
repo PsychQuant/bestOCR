@@ -53,6 +53,16 @@ public enum EvidenceIngest {
     /// Locate a runlog entry by exact id or unique prefix. Missing or
     /// ambiguous ids fail loudly — evidence provenance must be exact.
     public static func findEntry(id: String, in runlogURL: URL) throws -> RunLogEntry {
+        // "" is a prefix of EVERY id — without this guard a one-entry runlog
+        // would silently promote its only (unrelated) entry when handed the
+        // empty runID a refused consensus run reports (R1 V11). Exact means
+        // exact: empty is neither exact nor loud.
+        guard !id.isEmpty else {
+            throw OCREngineError(engine: "evidence",
+                                 message: "empty run id — refused runs have no "
+                                     + "ingestable entry (their runID is \"\"); "
+                                     + "pass an explicit run id")
+        }
         guard FileManager.default.fileExists(atPath: runlogURL.path) else {
             throw OCREngineError(engine: "evidence",
                                  message: "runlog not found: \(runlogURL.path)")

@@ -132,9 +132,13 @@ public struct FullDawidSkeneAdjudicator: ConsensusAdjudicator {
 
         // Exact-match Laplace competence, same rule and same exclusions as
         // ds-lite — reported alongside the confusion so the two adjudicators
-        // stay comparable on the quantity they share.
-        let (overall, perKind) = Self.competences(items: items, assignment: assignment,
-                                                  excluding: uninformative, engines: engines)
+        // stay comparable on the quantity they share. The informative-item
+        // count travels WITH the figure (#38): the same loop computed the
+        // same n, and dropping it here resurrected the bare `0.500` this
+        // issue exists to kill (R1 V2).
+        let (overall, perKind, informative) = Self.competences(
+            items: items, assignment: assignment,
+            excluding: uninformative, engines: engines)
 
         return ConsensusEstimate(
             adjudicator: Self.id,
@@ -144,7 +148,8 @@ public struct FullDawidSkeneAdjudicator: ConsensusAdjudicator {
                                                 competence: perKind,
                                                 iterations: iterations,
                                                 converged: converged,
-                                                confusion: confusion))
+                                                confusion: confusion,
+                                                informativeItems: informative))
     }
 
     // MARK: - E-step
@@ -228,8 +233,9 @@ public struct FullDawidSkeneAdjudicator: ConsensusAdjudicator {
 
     private static func competences(items: [AlignedItem], assignment: [Int: String],
                                     excluding uninformative: Set<Int>, engines: [String])
-        -> ([String: Double], [String: [ItemKind: Double]]) {
+        -> ([String: Double], [String: [ItemKind: Double]], [String: Int]) {
         var overall: [String: Double] = [:]
+        var informative: [String: Int] = [:]
         var counts: [String: [ItemKind: (n: Int, correct: Int)]] = [:]
         for engine in engines {
             var n = 0, correct = 0
@@ -246,12 +252,13 @@ public struct FullDawidSkeneAdjudicator: ConsensusAdjudicator {
                 counts[engine] = byKind
             }
             overall[engine] = Double(correct + 1) / Double(n + 2)
+            informative[engine] = n
         }
         var perKind: [String: [ItemKind: Double]] = [:]
         for (engine, byKind) in counts {
             perKind[engine] = byKind.mapValues { Double($0.correct + 1) / Double($0.n + 2) }
         }
-        return (overall, perKind)
+        return (overall, perKind, informative)
     }
 
     // MARK: - Alignment

@@ -14,6 +14,21 @@ struct FullDawidSkeneTests {
         AlignedItem(key: ItemKey(page: 1, index: index, kind: kind), responses: responses)
     }
 
+    /// #38 R1 V2: ds-full computes the informative-item count in the SAME
+    /// loop as its Laplace competence and used to drop it — `--adjudicator
+    /// ds-full` printed the bare `0.500` shape #38 exists to kill.
+    @Test func carriesInformativeItemCountsWithCompetence() {
+        var items: [AlignedItem] = []
+        for i in 0..<10 {
+            items.append(item(i, ["A": "line \(i)", "B": "line \(i)"]))
+        }
+        let est = FullDawidSkeneAdjudicator().adjudicate(items: items)
+        #expect(est.diagnostics.overallCompetence?["A"] != nil)
+        #expect(est.diagnostics.informativeItems?["A"] == 10,
+                "n must travel with the figure — same loop, same denominator")
+        #expect(est.diagnostics.informativeItems?["B"] == 10)
+    }
+
     /// The capability ds-lite structurally cannot have. `C` reads every zero as
     /// a capital O and is otherwise correct; A and B carry the truth.
     @Test func recoversAPlantedDirectionalConfusion() {

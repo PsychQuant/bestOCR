@@ -35,10 +35,14 @@ public enum ConsensusEstimator {
         // alignment slot but never vote (#13 verify).
         let items = allItems.filter { $0.responses.values.contains { !$0.canonical.isEmpty } }
         guard !items.isEmpty else {
+            // informativeItems is [:] here, not nil — ds-lite DOES report the
+            // count; an empty map is "nothing qualified", nil would claim the
+            // adjudicator has no such notion (#17 discipline; R1 V15/R10).
             return ConsensusEstimate(
                 adjudicator: DawidSkeneLiteAdjudicator.id, items: [], agreement: [:],
                 diagnostics: AdjudicatorDiagnostics(overallCompetence: [:], competence: [:],
-                                                    iterations: 0, converged: true))
+                                                    iterations: 0, converged: true,
+                                                    informativeItems: [:]))
         }
 
         // Metric identity requires at least one REAL response — an engine

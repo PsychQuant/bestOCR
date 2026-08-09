@@ -283,4 +283,14 @@ struct ConsensusEstimatorTests {
         #expect(n?["b"] == 3)
         #expect(n?["c"] == 0)   // prior-only engine is visibly n=0, not silently 0.5
     }
+
+    @Test func emptyItemsEarlyReturnKeepsInformativeItemsEmptyNotNil() {
+        // #17 discipline on the #38 field: ds-lite HAS the notion, so the
+        // empty-input path must say [:] ("nothing qualified"), not nil ("no
+        // such notion") — the other diagnostics on this path already do
+        // (R1 V15/R10).
+        let estimate = ConsensusEstimator.estimate(items: [])
+        #expect(estimate.diagnostics.informativeItems != nil)
+        #expect(estimate.diagnostics.informativeItems?.isEmpty == true)
+    }
 }
