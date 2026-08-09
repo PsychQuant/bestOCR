@@ -762,8 +762,12 @@ public actor BestOCRMCPServer {
             // the note fires only when the lockstep model's own prediction
             // holds — same n on both AND value == (n+1)/(n+2) — never on
             // coincidental value equality (R2 codex 3 → R3 codex 2).
+            // Contributors come from the COUNTS map alone (R4 codex): a
+            // positive-count engine absent from the competence map must
+            // still count — intersecting with competence.keys let the note
+            // fire with a third contributor hidden.
             if let counts = ns {
-                let contributors = competence.keys.filter { (counts[$0] ?? 0) > 0 }
+                let contributors = counts.filter { $0.value > 0 }.map(\.key)
                 if contributors.count == 2,
                    let n = counts[contributors[0]], counts[contributors[1]] == n,
                    let v = competence[contributors[0]], competence[contributors[1]] == v,

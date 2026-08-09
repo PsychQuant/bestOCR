@@ -445,6 +445,13 @@ struct ServerTests {
             check: nil, competence: ["a": 0.9, "b": 0.8, "c": 0.7],
             informativeItems: ["a": 5, "b": 5, "c": 5]))
         #expect(!three.contains("only two engines contributed"))
+        // A positive-count engine ABSENT from the competence map is still a
+        // contributor — deriving contributors from competence.keys hid it
+        // and fired the note falsely (R4 codex).
+        let hidden = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.75, "b": 0.75],
+            informativeItems: ["a": 2, "b": 2, "c": 1]))
+        #expect(!hidden.contains("only two engines contributed"))
         // Equal values with UNEQUAL n: coincidence, not the lockstep model —
         // (n+1)/(n+2) cannot be 0.8 for both n=3 and n=8 (R3 codex 2).
         let coincidence = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
