@@ -43,8 +43,9 @@ description: 多引擎共識 OCR——同一份文件逐一跑多個本機引擎
   未報告 n，**不是** n 很大）；majority 與 prior-weighted 無 competence 宣稱。
   `(prior — no informative items)` 表示該值是 Laplace 先驗、不是量測 ——
   這類引擎**不印數值**且排在實測引擎之後，轉述時不可把它們與實測引擎並列
-  比較。**2 引擎 run 的 competence 不可用於排名**（輸出有對應 note）：兩個
-  引擎的值恆等於 (n+1)/(n+2)、是對齊結構的確定函數，與品質無關（#60）。
+  比較。**只有兩個引擎貢獻 informative data 的 run，其 competence 不可用於
+  排名**（輸出有對應 note）：每個 informative item 都是兩方一致，兩個值恆等於
+  (n+1)/(n+2)、是對齊結構的確定函數，與品質無關（#60）。
 - **solo ≠ 分歧（#38）**：transcript 的 ⚠ 含「只有單一引擎回應、從未對齊」的
   solo items —— 那是切分差異，不是引擎間對此內容有爭議。transcript 開頭的
   legend 行與 items 行的 solo/unaligned 計數要一併轉述。

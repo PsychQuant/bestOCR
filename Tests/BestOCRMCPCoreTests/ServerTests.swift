@@ -382,6 +382,10 @@ struct ServerTests {
             informativeItems: ["a": 12, "b": 3]))
         #expect(text.contains("competence: a 0.900 (n=12)"))
         #expect(text.contains("competence: b 0.800 (n=3)"))
+        // R2 codex 3: UNEQUAL two-entry maps sit outside the lockstep model —
+        // the note asserted "the values are identical" right under 0.900 and
+        // 0.800 in this very fixture.
+        #expect(!text.contains("only two engines contributed"))
     }
 
     @Test func renderPriorOnlyEngineDropsNumericAndSortsAfterMeasured() {
@@ -420,27 +424,41 @@ struct ServerTests {
     }
 
     @Test func renderTwoEngineRunCarriesLockstepNote() {
-        // R1 V3 (#60): with two engines every informative item is an
-        // agreement — competence is (n+1)/(n+2) by construction and the
-        // ranking is vacuous; the reader must be told at the point of use.
+        // R1 V3 (#60): with two CONTRIBUTING engines every informative item
+        // is a two-way agreement — competence is (n+1)/(n+2) by construction
+        // and the ranking is vacuous; the reader must be told at the point
+        // of use. The note fires only when the two values are actually
+        // identical (the lockstep model's own prediction — R2 codex 3).
         let two = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
             check: nil, competence: ["a": 0.969, "b": 0.969],
             informativeItems: ["a": 30, "b": 30]))
-        #expect(two.contains("2-engine run"))
+        #expect(two.contains("only two engines contributed informative data"))
         #expect(two.contains("#60"))
         let three = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
             check: nil, competence: ["a": 0.9, "b": 0.8, "c": 0.7],
             informativeItems: ["a": 5, "b": 5, "c": 5]))
-        #expect(!three.contains("2-engine run"))
+        #expect(!three.contains("only two engines contributed"))
+        // Unequal two-entry map (outside the lockstep model): no note — it
+        // would assert an equality the lines above visibly contradict.
+        let unequal = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9, "b": 0.8],
+            informativeItems: ["a": 5, "b": 4]))
+        #expect(!unequal.contains("only two engines contributed"))
     }
 
     @Test func renderPassedRunDisclosesCoAnswerShareAndThreshold() {
         // R1 V6: the gate's numbers appear on the PASSED path — the
         // threshold is env-overridable and matters most when changed.
+        // %g rendering: a fixed decimal count collapsed legal tiny
+        // thresholds to "0.0000" (R2 codex 1).
         let text = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
             check: nil, competence: ["a": 0.9], informativeItems: ["a": 5],
             coAnswerShare: 0.6667, minCoAnswer: 0.2))
-        #expect(text.contains("co-answer: share 0.6667 (threshold 0.2000"))
+        #expect(text.contains("co-answer: share 0.6667 (threshold 0.2 "))
+        let tiny = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.9], informativeItems: ["a": 5],
+            coAnswerShare: 0.5, minCoAnswer: 0.00001))
+        #expect(tiny.contains("threshold 1e-05"))
     }
 
     @Test func renderSequenceAdjudicatorDisclosesGateNotApplied() {

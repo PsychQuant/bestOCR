@@ -202,12 +202,19 @@ public enum ConsensusPipeline {
         return v
     }
 
+    /// Human-facing rendering of the gate's share/threshold numbers: %g, not
+    /// a fixed decimal count. %.2f rendered "0.0149 below threshold 0.01"
+    /// (R1 V6) and %.4f merely moved the cliff — a legal 1e-05 threshold
+    /// printed as "0.0000", self-contradictory again (R2 codex 1). %g keeps
+    /// significant digits at every legal magnitude; exact values live in the
+    /// structured fields, which are canonical.
+    public static func shareText(_ value: Double) -> String {
+        String(format: "%g", value)
+    }
+
     /// nil = proceed; a String = refuse with this reason. Competence computed
     /// from near-zero co-answers is not a weak estimate of engine quality —
     /// it is an estimate of something else wearing the same shape (#38).
-    /// Both numbers print at %.4f — a %.2f threshold could render a
-    /// self-contradictory "0.0149 below threshold 0.01" (R1 V6; same fix #39
-    /// applied to its own reason string).
     public static func coAnswerGate(items: [AlignedItem], threshold: Double) -> String? {
         guard !ConsensusShared.votable(items).isEmpty else {
             // A page where nothing with content was extracted is a different
@@ -218,8 +225,8 @@ public enum ConsensusPipeline {
         }
         let share = coAnswerShare(of: items)
         guard share < threshold else { return nil }
-        return "co_answer_share \(String(format: "%.4f", share)) below threshold "
-            + "\(String(format: "%.4f", threshold)) — alignment mostly never happened; "
+        return "co_answer_share \(shareText(share)) below threshold "
+            + "\(shareText(threshold)) — alignment mostly never happened; "
             + "competence would measure segmentation mismatch, not engine quality"
     }
 
@@ -517,6 +524,17 @@ public enum ConsensusPipeline {
                                + ";converged=\(estimate.diagnostics.converged.map(String.init) ?? "n/a")"))
         try runLog.append(entry)
 
+        // R2 codex 4: derive "produced output but nothing aligned" from the
+        // engine's OWN extraction, never from adjudicated responses — ROVER's
+        // total network hands silent engines non-empty epsilon votes, which
+        // made the adjudicated-responses predicate count them as contributors.
+        let silentEngines = results.keys.sorted().filter { engine in
+            guard let result = results[engine] else { return true }
+            return !result.pages.contains { page in
+                ItemExtractor.extract(page: page.page, text: page.text)
+                    .contains { !$0.normalized.isEmpty }
+            }
+        }
         return ConsensusRunSummary(outputMarkdown: outputs.markdown,
                                    outputReport: outputs.report,
                                    engines: results.keys.sorted(),
@@ -527,12 +545,7 @@ public enum ConsensusPipeline {
                                    singleConsensus: singleConsensus,
                                    coAnswerShare: gateShare,
                                    minCoAnswer: gateThreshold,
-                                   enginesWithoutAlignedItems:
-                                       results.keys.sorted().filter { engine in
-                                           !estimate.items.contains {
-                                               ($0.responses[engine]?.isEmpty == false)
-                                           }
-                                       })
+                                   enginesWithoutAlignedItems: silentEngines)
     }
 
     /// Shared refusal writer for the #38 co-answer gate and the #39
@@ -604,13 +617,17 @@ struct ConsensusReport: Codable {
     /// Legacy files decode as 1/2 with `adjudicator` defaulting to ds-lite.
     ///
     /// Additive-optional fields under v3 (no bump — every one decodes to an
-    /// honest default on older files, so two v3 files may differ in keys):
-    /// #38 added `refused` / `refusal_reason` / `response_counts` /
-    /// `informative_items`; #39 added `single_consensus`; the #38 verify
-    /// round added `min_co_answer` / `refusal_kind` / `placeholder_only_items`
-    /// and made `low_consensus` optional (absent on refused reports — nil,
-    /// never [], because no adjudicator classified anything).
-    static let currentSchemaVersion = 3
+    /// honest default on older files): #38 added `refused` / `refusal_reason`
+    /// / `response_counts` / `informative_items`; #39 added `single_consensus`.
+    ///
+    /// 4 (#38 verify round) = NOT additive, hence the bump (R2 codex 2):
+    /// refused reports OMIT `low_consensus` (nil, never [] — no adjudicator
+    /// classified anything), which removes a key a strict v3 decoder
+    /// required; and `item_count` / `co_answer_share` / `response_counts`
+    /// are computed on the votable population (all-empty placeholder slots
+    /// excluded, disclosed as `placeholder_only_items`). Also adds
+    /// `min_co_answer` / `refusal_kind`. This reader accepts 1–4.
+    static let currentSchemaVersion = 4
 
     let schemaVersion: Int
     /// Which adjudicator produced this report. Absent in schema < 3, where

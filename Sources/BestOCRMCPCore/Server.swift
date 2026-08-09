@@ -695,8 +695,10 @@ public actor BestOCRMCPServer {
         // Sequence adjudicators (rover) never ran the gate: say so instead of
         // silently omitting the line (R1 V5; behavior unification is #61).
         if let share = summary.coAnswerShare, let minShare = summary.minCoAnswer {
-            lines.append(String(format: "co-answer: share %.4f (threshold %.4f — env-overridable)",
-                                share, minShare))
+            // %g via shareText — a fixed decimal count collapses legal tiny
+            // thresholds to "0.0000" (R2 codex 1).
+            lines.append("co-answer: share \(ConsensusPipeline.shareText(share)) "
+                         + "(threshold \(ConsensusPipeline.shareText(minShare)) — env-overridable)")
         } else if AdjudicatorRegistry.isSequenceAdjudicator(est.adjudicator) {
             lines.append("co-answer gate: not applied — \(est.adjudicator)'s confusion-network "
                          + "alignment has its own co-answer semantics (#61)")
@@ -751,13 +753,20 @@ public actor BestOCRMCPServer {
                 lines.append("competence: \(id) (prior — no informative items; "
                              + "not comparable to measured engines)")
             }
-            // R1 V3 (#60): with exactly two engines, every informative item
-            // is an agreement — being judged wrong is structurally impossible,
-            // so both competences equal (n+1)/(n+2) regardless of quality.
-            if competence.count == 2, ns != nil {
-                lines.append("note: 2-engine run — competence is (n+1)/(n+2) by construction "
-                             + "(agreement-only corroboration); the values are identical and "
-                             + "carry no ranking information (#60)")
+            // R1 V3 (#60): with exactly two CONTRIBUTING engines, every
+            // informative item is a two-way agreement — being judged wrong is
+            // structurally impossible, so both competences equal (n+1)/(n+2)
+            // regardless of quality. Guarded on the map size AND on the
+            // values actually being identical: the run may have more engines
+            // than contributors ("2-engine run" would mislabel it), and a
+            // diagnostics producer outside the lockstep model must not make
+            // this line assert an equality that is false (R2 codex 3).
+            if ns != nil, competence.count == 2,
+               Set(competence.values).count == 1 {
+                lines.append("note: only two engines contributed informative data — every "
+                             + "informative item is a two-way agreement, so competence is "
+                             + "(n+1)/(n+2) by construction; the identical values carry no "
+                             + "ranking information (#60)")
             }
         } else {
             lines.append("competence: n/a — \(est.adjudicator) has no competence model")

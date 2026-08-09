@@ -370,9 +370,12 @@ struct ConsensusPipelineTests {
             "A": result("A", "hello"), "B": result("B", "hello"),
         ])
         let report = ConsensusReport(estimate: estimate, engines: ["A", "B"], skipped: [:])
-        #expect(report.schemaVersion == 3)
+        // v4 (#38 verify round): refused reports omit low_consensus — a
+        // REMOVED required key for strict v3 decoders, hence a real bump,
+        // not an additive change under 3 (R2 codex 2).
+        #expect(report.schemaVersion == 4)
         let encoded = String(decoding: try JSONEncoder().encode(report), as: UTF8.self)
-        #expect(encoded.contains("\"schema_version\":3"), "the version must land in the JSON artifact")
+        #expect(encoded.contains("\"schema_version\":4"), "the version must land in the JSON artifact")
         #expect(encoded.contains("\"adjudicator\":\"ds-lite\""),
                 "#17: the artifact must name the model that produced it")
         let legacy = """
@@ -565,10 +568,21 @@ struct ConsensusPipelineTests {
 
     @Test func gateReasonPrintsThresholdAtFullPrecision() {
         // %.2f could claim "below threshold 0.01" for a 0.015 threshold —
-        // self-contradictory text (R1 V6/M3). Both numbers print %.4f.
+        // self-contradictory text (R1 V6/M3). %.4f merely moved the cliff:
+        // a legal 1e-05 threshold printed "0.0000" (R2 codex 1). %g keeps
+        // significant digits at every legal magnitude.
         let reason = ConsensusPipeline.coAnswerGate(items: soloHeavyItems(),
                                                     threshold: 0.0725)
         #expect(reason?.contains("threshold 0.0725") == true)
+        // All-solo items → share 0 < any legal threshold, however tiny.
+        var solos: [AlignedItem] = []
+        for i in 0..<3 {
+            solos.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "solo-\(i)"]))
+        }
+        let tiny = ConsensusPipeline.coAnswerGate(items: solos, threshold: 0.00001)
+        #expect(tiny?.contains("below threshold 1e-05") == true,
+                "a tiny legal threshold must not render as 0.0000")
     }
 
     @Test func refusedReportCarriesStructuredGateFields() throws {
@@ -750,6 +764,26 @@ struct ConsensusPipelineTests {
             inputPath: "/tmp/in2.png", outDir: tmp)
         let cleanMd = try String(contentsOf: cleanOut.markdown, encoding: .utf8)
         #expect(!cleanMd.contains("⚠ ="))
+    }
+
+    @Test func roverRunFlagsTokenlessEngineAsWithoutAlignedItems() async throws {
+        // R2 codex 4: ROVER's total network hands a tokenless engine
+        // non-empty epsilon votes, so a predicate over adjudicated responses
+        // counted it as a contributor — the summary must derive "produced
+        // output but nothing aligned" from the engine's own extraction.
+        let (tmp, img, runLog) = try fixtureSetup()
+        let registry = EngineRegistry(engines: [
+            StubEngine(id: "A", availability: .available, text: "hello world"),
+            StubEngine(id: "B", availability: .available, text: ""),
+        ])
+        let summary = try await ConsensusPipeline.execute(
+            inputPath: img.path, engineIDs: ["A", "B"], dpi: 150,
+            pageSpec: "", languages: [], docType: "test",
+            outDir: tmp.appendingPathComponent("out"), registry: registry,
+            runLog: runLog, adjudicatorID: "rover")
+        #expect(!summary.refused, "epsilon totality lets this rover run proceed (#61)")
+        #expect(summary.enginesWithoutAlignedItems == ["B"],
+                "the tokenless engine must be flagged despite its epsilon votes")
     }
 
     @Test func refusedTranscriptOneLinesNewlineBearingStem() async throws {
