@@ -583,6 +583,19 @@ struct ConsensusPipelineTests {
         let tiny = ConsensusPipeline.coAnswerGate(items: solos, threshold: 0.00001)
         #expect(tiny?.contains("below threshold 1e-05") == true,
                 "a tiny legal threshold must not render as 0.0000")
+        // R3 codex 1: %g's six significant digits printed DISTINCT doubles
+        // as the same string ("0.333333 below threshold 0.333333"). The
+        // round-trip rendering keeps them apart.
+        var third: [AlignedItem] = []
+        third.append(AlignedItem(key: ItemKey(page: 1, index: 0, kind: .proseLine),
+                                 responses: ["a": "x", "b": "x"]))
+        for i in 1..<3 {
+            third.append(AlignedItem(key: ItemKey(page: 1, index: i, kind: .proseLine),
+                                     responses: ["a": "solo-\(i)"]))
+        }
+        let near = ConsensusPipeline.coAnswerGate(items: third, threshold: 0.3333334)
+        #expect(near?.contains("0.3333333333333333 below threshold 0.3333334") == true,
+                "distinct doubles must never render as the same string")
     }
 
     @Test func refusedReportCarriesStructuredGateFields() throws {

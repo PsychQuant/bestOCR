@@ -756,17 +756,23 @@ public actor BestOCRMCPServer {
             // R1 V3 (#60): with exactly two CONTRIBUTING engines, every
             // informative item is a two-way agreement — being judged wrong is
             // structurally impossible, so both competences equal (n+1)/(n+2)
-            // regardless of quality. Guarded on the map size AND on the
-            // values actually being identical: the run may have more engines
-            // than contributors ("2-engine run" would mislabel it), and a
-            // diagnostics producer outside the lockstep model must not make
-            // this line assert an equality that is false (R2 codex 3).
-            if ns != nil, competence.count == 2,
-               Set(competence.values).count == 1 {
-                lines.append("note: only two engines contributed informative data — every "
-                             + "informative item is a two-way agreement, so competence is "
-                             + "(n+1)/(n+2) by construction; the identical values carry no "
-                             + "ranking information (#60)")
+            // regardless of quality. Contributors are derived from POSITIVE
+            // informative counts, not map cardinality (prior-only engines
+            // stay in the map and were wrongly suppressing the note), and
+            // the note fires only when the lockstep model's own prediction
+            // holds — same n on both AND value == (n+1)/(n+2) — never on
+            // coincidental value equality (R2 codex 3 → R3 codex 2).
+            if let counts = ns {
+                let contributors = competence.keys.filter { (counts[$0] ?? 0) > 0 }
+                if contributors.count == 2,
+                   let n = counts[contributors[0]], counts[contributors[1]] == n,
+                   let v = competence[contributors[0]], competence[contributors[1]] == v,
+                   v == Double(n + 1) / Double(n + 2) {
+                    lines.append("note: only two engines contributed informative data — "
+                                 + "every informative item is a two-way agreement, so "
+                                 + "competence is (n+1)/(n+2) by construction; the identical "
+                                 + "values carry no ranking information (#60)")
+                }
             }
         } else {
             lines.append("competence: n/a — \(est.adjudicator) has no competence model")

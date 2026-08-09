@@ -202,14 +202,17 @@ public enum ConsensusPipeline {
         return v
     }
 
-    /// Human-facing rendering of the gate's share/threshold numbers: %g, not
-    /// a fixed decimal count. %.2f rendered "0.0149 below threshold 0.01"
-    /// (R1 V6) and %.4f merely moved the cliff — a legal 1e-05 threshold
-    /// printed as "0.0000", self-contradictory again (R2 codex 1). %g keeps
-    /// significant digits at every legal magnitude; exact values live in the
-    /// structured fields, which are canonical.
+    /// Human-facing rendering of the gate's share/threshold numbers:
+    /// Swift's shortest ROUND-TRIP representation (`String(_:)`), not any
+    /// fixed precision. The history of this line is three rounds of the same
+    /// bug at shrinking magnitudes: %.2f rendered "0.0149 below threshold
+    /// 0.01" (R1 V6), %.4f collapsed a legal 1e-05 threshold to "0.0000"
+    /// (R2 codex 1), and %g's six significant digits printed share 1/3 and
+    /// threshold 0.3333334 as the same string (R3 codex 1). Round-trip
+    /// rendering is the only precision at which two DISTINCT doubles can
+    /// never render identically.
     public static func shareText(_ value: Double) -> String {
-        String(format: "%g", value)
+        String(value)
     }
 
     /// nil = proceed; a String = refuse with this reason. Competence computed

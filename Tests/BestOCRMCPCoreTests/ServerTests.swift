@@ -427,17 +427,30 @@ struct ServerTests {
         // R1 V3 (#60): with two CONTRIBUTING engines every informative item
         // is a two-way agreement — competence is (n+1)/(n+2) by construction
         // and the ranking is vacuous; the reader must be told at the point
-        // of use. The note fires only when the two values are actually
-        // identical (the lockstep model's own prediction — R2 codex 3).
+        // of use. Contributors come from POSITIVE n, and the note fires only
+        // when the lockstep model's own prediction holds — same n, value ==
+        // (n+1)/(n+2) (R2 codex 3 → R3 codex 2).
         let two = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
-            check: nil, competence: ["a": 0.969, "b": 0.969],
+            check: nil, competence: ["a": 31.0 / 32.0, "b": 31.0 / 32.0],
             informativeItems: ["a": 30, "b": 30]))
         #expect(two.contains("only two engines contributed informative data"))
         #expect(two.contains("#60"))
+        // A prior-only THIRD engine stays in the map but is not a
+        // contributor — it must not suppress the note (R3 codex 2).
+        let withPrior = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.75, "b": 0.75, "c": 0.5],
+            informativeItems: ["a": 2, "b": 2, "c": 0]))
+        #expect(withPrior.contains("only two engines contributed informative data"))
         let three = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
             check: nil, competence: ["a": 0.9, "b": 0.8, "c": 0.7],
             informativeItems: ["a": 5, "b": 5, "c": 5]))
         #expect(!three.contains("only two engines contributed"))
+        // Equal values with UNEQUAL n: coincidence, not the lockstep model —
+        // (n+1)/(n+2) cannot be 0.8 for both n=3 and n=8 (R3 codex 2).
+        let coincidence = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
+            check: nil, competence: ["a": 0.8, "b": 0.8],
+            informativeItems: ["a": 3, "b": 8]))
+        #expect(!coincidence.contains("only two engines contributed"))
         // Unequal two-entry map (outside the lockstep model): no note — it
         // would assert an equality the lines above visibly contradict.
         let unequal = BestOCRMCPServer.renderConsensusSummary(summaryFixture(
